@@ -31,6 +31,7 @@
 #ifdef _MSC_VER
 #  define ALIGNED_STRUCT(name, alignment) __declspec(align(alignment)) struct name
 #  define FORCEINLINE __forceinline
+#  define TLS_MODEL
 #  define _Static_assert static_assert
 #  define _Thread_local __declspec(thread)
 #  define atomic_thread_fence_acquire() //_ReadWriteBarrier()
@@ -38,6 +39,7 @@
 #else
 #  define ALIGNED_STRUCT(name, alignment) struct __attribute__((__aligned__(alignment))) name
 #  define FORCEINLINE inline __attribute__((__always_inline__))
+#  define TLS_MODEL __attribute__((tls_model("initial-exec")))
 #  if !defined(__clang__) && defined(__GNUC__)
 #    define _Thread_local __thread
 #  endif
@@ -281,7 +283,7 @@ static atomicptr_t _memory_span_cache[SPAN_CLASS_COUNT];
 static atomicptr_t _memory_large_cache[LARGE_CLASS_COUNT];
 
 //! Current thread heap
-static _Thread_local heap_t* _memory_thread_heap;
+static _Thread_local heap_t* _memory_thread_heap TLS_MODEL;
 
 //! All heaps
 static atomicptr_t _memory_heaps[HEAP_ARRAY_SIZE];
@@ -704,15 +706,17 @@ _memory_deallocate_to_heap(heap_t* heap, span_t* span, void* p) {
 		if (block_data->free_count > 0)
 			_memory_list_remove(&heap->size_cache[class_idx], span);
 
+#if defined(THREAD_SPAN_CACHE_LIMIT) && (THREAD_SPAN_CACHE_LIMIT(1) == 0)
+		_memory_global_cache_insert(span, 1, size_class->page_count);
+#else
 		//Add to span cache
 		span_t** cache = &heap->span_cache[size_class->page_count-1];
+		span->next_span = *cache;
 		if (*cache) {
-			span->next_span = *cache;
 			span->prev_span = (*cache)->prev_span; //Propagate skip span
 			span->data.list_size = (*cache)->data.list_size + 1;
 		}
 		else {
-			span->next_span = 0;
 			span->data.list_size = 1;
 		}
 		*cache = span;
@@ -727,6 +731,7 @@ _memory_deallocate_to_heap(heap_t* heap, span_t* span, void* p) {
 		else if (span->data.list_size == ((cache_limit / 2) + 1)) {
 			span->prev_span = span; //Set last span to release as skip span
 		}
+#endif
 #endif
 	}
 	else {
@@ -753,30 +758,35 @@ _memory_deallocate_to_heap(heap_t* heap, span_t* span, void* p) {
 
 static void
 _memory_deallocate_large_to_heap(heap_t* heap, span_t* span) {
+#if defined(THREAD_LARGE_CACHE_LIMIT) && (THREAD_LARGE_CACHE_LIMIT(1) == 0)
+	(void)sizeof(heap);
+	_memory_global_cache_large_insert(span, 1, span->data.span_count);
+#else
 	size_t idx = span->data.span_count - 1;
 	span_t* head = heap->large_cache[idx];
 	span->next_span = head;
 	//Use prev_span pointer for quick skip access to next head element after release
 	if (head) {
 		span->data.list_size = head->data.list_size + 1;
-#if defined(THREAD_LARGE_CACHE_LIMIT)
-		const size_t cache_limit = THREAD_LARGE_CACHE_LIMIT(span->data.span_count);
 		span->prev_span = head->prev_span; //Propagate skip span pointer
-		if (span->data.list_size >= cache_limit) {
-			heap->large_cache[idx] = span->prev_span->next_span;
-			span->prev_span->next_span = 0; //Terminate list
-			_memory_global_cache_large_insert(span, span->data.list_size - heap->large_cache[idx]->data.list_size, idx + 1);
-			return;
-		}
-		else if (span->data.list_size == ((cache_limit / 2) + 1)) {
-			span->prev_span = span; //Set last span to release as skip span
-		}
-#endif
 	}
 	else {
 		span->data.list_size = 1;
 	}
+#if defined(THREAD_LARGE_CACHE_LIMIT)
+	const size_t cache_limit = THREAD_LARGE_CACHE_LIMIT(span->data.span_count);
+	if (span->data.list_size >= cache_limit) {
+		heap->large_cache[idx] = span->prev_span->next_span;
+		span->prev_span->next_span = 0; //Terminate list
+		_memory_global_cache_large_insert(span, span->data.list_size - heap->large_cache[idx]->data.list_size, idx + 1);
+		return;
+	}
+	else if (span->data.list_size == ((cache_limit / 2) + 1)) {
+		span->prev_span = span; //Set last span to release as skip span
+	}
+#endif
 	heap->large_cache[idx] = span;
+#endif
 }
 
 static int
@@ -816,28 +826,10 @@ _memory_deallocate_defer(int32_t heap_id, void* p) {
 
 static void*
 _memory_allocate(size_t size) {
-	if (size <= MEDIUM_SIZE_LIMIT) {
-		heap_t* heap = _memory_thread_heap;
-		if (heap)
-			return _memory_allocate_from_heap(heap, size);
-
-		heap = _memory_allocate_heap();
-		if (heap) {
-			_memory_thread_heap = heap;
-			return _memory_allocate_from_heap(heap, size);
-		}
-	}
-	else if (size <= LARGE_SIZE_LIMIT) {
-		heap_t* heap = _memory_thread_heap;
-		if (heap)
-			return _memory_allocate_large_from_heap(heap, size);
-
-		heap = _memory_allocate_heap();
-		if (heap) {
-			_memory_thread_heap = heap;
-			return _memory_allocate_large_from_heap(heap, size);
-		}
-	}
+	if (size <= MEDIUM_SIZE_LIMIT)
+		return _memory_allocate_from_heap(_memory_thread_heap, size);
+	else if (size <= LARGE_SIZE_LIMIT)
+		return _memory_allocate_large_from_heap(_memory_thread_heap, size);
 
 	//Oversized, allocate pages directly
 	size += SPAN_HEADER_SIZE;
@@ -860,7 +852,7 @@ _memory_deallocate(void* p) {
 	span_t* span = (void*)((uintptr_t)p & SPAN_MASK);
 	int32_t heap_id = atomic_load32(&span->heap_id);
 	heap_t* heap = _memory_thread_heap;
-	if (heap && (heap_id == heap->id)) {
+	if (heap_id == heap->id) {
 		if (span->size_class < SIZE_CLASS_COUNT)
 			_memory_deallocate_to_heap(heap, span, p);
 		else
@@ -1010,6 +1002,8 @@ rpmalloc_initialize(void) {
 		_memory_adjust_size_class(SMALL_CLASS_COUNT + iclass);
 	}
 
+	rpmalloc_thread_initialize();
+
 	return 0;
 }
 
@@ -1097,57 +1091,75 @@ rpmalloc_finalize(void) {
 	atomic_thread_fence_release();
 }
 
+void rpmalloc_thread_initialize(void) {
+	if (!_memory_thread_heap)
+		_memory_thread_heap = _memory_allocate_heap();
+}
+
 void
 rpmalloc_thread_finalize(void) {
 	heap_t* heap = _memory_thread_heap;
-	if (heap) {
-		//Release thread cache spans back to global cache
-		for (size_t iclass = 0; iclass < SPAN_CLASS_COUNT; ++iclass) {
-			const size_t page_count = iclass + 1;
-			const size_t cache_limit = THREAD_SPAN_CACHE_LIMIT(page_count);
-			span_t* span = heap->span_cache[iclass];
-			while (span) {
-				if (span->data.list_size >(cache_limit / 2)) {
-					span_t* new_head = span->prev_span->next_span;
-					span->prev_span->next_span = 0; //Terminate list
-					_memory_global_cache_insert(span, span->data.list_size - new_head->data.list_size, page_count);
-					span = new_head;
-				}
-				else {
-					_memory_global_cache_insert(span, span->data.list_size, page_count);
-					span = 0;
-				}
-			}
-			heap->span_cache[iclass] = 0;
-		}
+	if (!heap)
+		return;
 
-		for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
-			const size_t span_count = iclass + 1;
-			const size_t cache_limit = THREAD_LARGE_CACHE_LIMIT(span_count);
-			span_t* span = heap->large_cache[iclass];
-			while (span) {
-				if (span->data.list_size > (cache_limit / 2)) {
-					span_t* new_head = span->prev_span->next_span;
-					span->prev_span->next_span = 0; //Terminate list
-					_memory_global_cache_large_insert(span, span->data.list_size - new_head->data.list_size, span_count);
-					span = new_head;
-				}
-				else  {
-					_memory_global_cache_large_insert(span, span->data.list_size, span_count);
-					span = 0;
-				}
+	//Release thread cache spans back to global cache
+	for (size_t iclass = 0; iclass < SPAN_CLASS_COUNT; ++iclass) {
+		const size_t page_count = iclass + 1;
+#if defined(THREAD_SPAN_CACHE_LIMIT)
+		const size_t cache_limit = THREAD_SPAN_CACHE_LIMIT(page_count);
+		span_t* span = heap->span_cache[iclass];
+		while (span) {
+			if (span->data.list_size > (cache_limit / 2)) {
+				span_t* new_head = span->prev_span->next_span;
+				span->prev_span->next_span = 0; //Terminate list
+				_memory_global_cache_insert(span, span->data.list_size - new_head->data.list_size, page_count);
+				span = new_head;
 			}
-			heap->large_cache[iclass] = 0;
+			else {
+				_memory_global_cache_insert(span, span->data.list_size, page_count);
+				span = 0;
+			}
 		}
-
-		//Orphan the heap
-		heap_t* last_heap;
-		do {
-			last_heap = atomic_load_ptr(&_memory_orphan_heaps);
-			heap->next_orphan = last_heap;
-		}
-		while (!atomic_cas_ptr(&_memory_orphan_heaps, heap, last_heap));
+#else
+		span_t* span = heap->span_cache[iclass];
+		if (span)
+			_memory_global_cache_insert(span, span->data.list_size, page_count);
+#endif
+		heap->span_cache[iclass] = 0;
 	}
+
+	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
+		const size_t span_count = iclass + 1;
+#if defined(THREAD_LARGE_CACHE_LIMIT)
+		const size_t cache_limit = THREAD_LARGE_CACHE_LIMIT(span_count);
+		span_t* span = heap->large_cache[iclass];
+		while (span) {
+			if (span->data.list_size > (cache_limit / 2)) {
+				span_t* new_head = span->prev_span->next_span;
+				span->prev_span->next_span = 0; //Terminate list
+				_memory_global_cache_large_insert(span, span->data.list_size - new_head->data.list_size, span_count);
+				span = new_head;
+			}
+			else  {
+				_memory_global_cache_large_insert(span, span->data.list_size, span_count);
+				span = 0;
+			}
+		}
+#else
+		span_t* span = heap->large_cache[iclass];
+		if (span)
+			_memory_global_cache_large_insert(span, span->data.list_size, span_count);
+#endif
+		heap->large_cache[iclass] = 0;
+	}
+
+	//Orphan the heap
+	heap_t* last_heap;
+	do {
+		last_heap = atomic_load_ptr(&_memory_orphan_heaps);
+		heap->next_orphan = last_heap;
+	}
+	while (!atomic_cas_ptr(&_memory_orphan_heaps, heap, last_heap));
 	
 	_memory_thread_heap = 0;
 }

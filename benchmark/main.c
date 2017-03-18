@@ -494,6 +494,8 @@ benchmark_worker(void* argptr) {
 	benchmark_thread_finalize();
 
 	arg->accumulator += arg->mops;
+
+	thread_exit(0);
 }
 
 int main(int argc, char** argv) {
@@ -575,6 +577,8 @@ int main(int argc, char** argv) {
 	benchmark_arg* arg;
 	uintptr_t* thread_handle;
 	FILE* fd;
+
+	benchmark_thread_initialize();
 	
 	arg = benchmark_malloc(0, sizeof(benchmark_arg) * thread_count);
 	thread_handle = benchmark_malloc(0, sizeof(thread_handle) * thread_count);

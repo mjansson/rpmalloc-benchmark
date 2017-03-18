@@ -39,6 +39,15 @@ thread_run(thread_arg* arg) {
 #endif
 }
 
+void __attribute__((noreturn))
+thread_exit(void* value) {
+#ifdef _WIN32
+	...
+#else
+	pthread_exit(value);
+#endif
+}
+
 void
 thread_join(uintptr_t handle) {
 	if (!handle)

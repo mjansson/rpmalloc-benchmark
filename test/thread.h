@@ -12,6 +12,9 @@ extern uintptr_t
 thread_run(thread_arg* arg);
 
 extern void
+thread_exit(void* value);
+
+extern void
 thread_join(uintptr_t handle);
 
 extern void
