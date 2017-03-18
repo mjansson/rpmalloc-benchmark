@@ -110,7 +110,7 @@ static size_t random_size_lin[1000];
 static size_t random_size_exp[1000];
 static size_t* random_size_arr;
 
-static const size_t num_alloc_ops[] = {
+static size_t num_alloc_ops[] = {
 	13,	18,	12,	16,	27,
 	34,	24,	24,	18,	14,
 	12,	18,	33,	16,	27,
@@ -133,7 +133,7 @@ static const size_t num_alloc_ops[] = {
 	31,	7,	31,	19,	29
 };
 
-static const size_t num_free_ops[] = {
+static size_t num_free_ops[] = {
 	8,	6,	5,	23,	24,
 	22,	21,	13,	18,	13,
 	5,	7,	11,	10,	17,
@@ -238,7 +238,7 @@ benchmark_worker(void* argptr) {
 	arg->mops = 0;
 	for (size_t iter = 0; iter < 2; ++iter) {
 		size_t size_index = 0;
-		size_t iter_ticks_elapsed = 0;
+		uint64_t iter_ticks_elapsed = 0;
 
 		for (size_t iloop = 0; iloop < arg->loop_count; ++iloop) {
 			size_index = ((arg->index + 1) * ((iter + 1) * 3 + (iloop + 1) * 7)) % random_size_count;
@@ -557,15 +557,23 @@ int main(int argc, char** argv) {
 	//Setup the random size tables
 	size_t size_range = max_size - min_size;
 	const size_t random_size_count = (sizeof(random_size) / sizeof(random_size[0]));
-	for (size_t ir = 0; ir < sizeof(random_size) / sizeof(random_size[0]); ++ir)
+	for (size_t ir = 0; ir < random_size_count; ++ir)
 		random_size[ir] %= size_range;
 
-	for (size_t ir = 0; ir < sizeof(random_size) / sizeof(random_size[0]); ++ir) {
+	for (size_t ir = 0; ir < random_size_count; ++ir) {
 		double w0 = 1.0 - (double)random_size[ir] / (double)size_range;
 		double w1 = 1.0 - (double)random_size[(ir + 1) % random_size_count] / (double)size_range;
 		random_size_lin[ir] = (size_t)((double)random_size[(ir + 2) % random_size_count] * fabs((w0 + w1) - 1.0));
 		random_size_exp[ir] = (size_t)((double)random_size[(ir + 2) % random_size_count] * (w0 * w1));
 	}
+
+	//Setup operation count
+	size_t op_count = (sizeof(num_alloc_ops) / sizeof(num_alloc_ops[0]));
+	for (size_t ic = 0; ic < op_count; ++ic)
+		num_alloc_ops[ic] = (size_t)((double)alloc_count * ((double)num_alloc_ops[ic] / 1000.0));
+	op_count = (sizeof(num_free_ops) / sizeof(num_free_ops[0]));
+	for (size_t ic = 0; ic < op_count; ++ic)
+		num_free_ops[ic] = (size_t)((double)alloc_count * ((double)num_free_ops[ic] / 1000.0));
 
 	if (size_mode == SIZE_MODE_EVEN)
 		random_size_arr = random_size;
