@@ -156,14 +156,15 @@ static size_t num_free_ops[] = {
 	13,	6,	9,	23,	16
 };
 
-#ifdef _WIN32
+#if defined(_WIN32)
 #include <Windows.h>
 #include <Psapi.h>
-#endif
-
-#ifdef __APPLE__
+#elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/task.h>
+#else
+#include <unistd.h>
+#include <sys/resource.h>
 #endif
 
 static size_t
@@ -182,7 +183,14 @@ get_process_memory_usage(void) {
 		return 0;
 	return info.resident_size;
 #else
-	return 0;
+	long rss = 0L;
+	FILE* fp = fopen("/proc/self/statm", "r");
+	if (!fp)
+		return 0;
+	if (fscanf(fp, "%*s%ld", &rss) != 1)
+		rss = 0;
+	fclose(fp);
+	return (size_t)rss * (size_t)sysconf(_SC_PAGESIZE);
 #endif
 }
 
@@ -265,6 +273,7 @@ benchmark_worker(void* argptr) {
 				//Make sure to write to each page to commit it for measuring memory usage
 				for (size_t page = 1; page < size / 4096; ++page)
 					*((char*)(pointers[alloc_idx]) + (page * 4096)) = 1;
+				*((char*)(pointers[alloc_idx]) + (size - 1)) = 1;
 				allocated += (int32_t)size;
 				++arg->mops;
 
@@ -297,6 +306,7 @@ benchmark_worker(void* argptr) {
 				*(int32_t*)pointers[alloc_idx] = (int32_t)size;
 				for (size_t page = 1; page < size / 4096; ++page)
 					*((char*)(pointers[alloc_idx]) + (page * 4096)) = 1;
+				*((char*)(pointers[alloc_idx]) + (size - 1)) = 1;
 				allocated += (int32_t)size;
 				++arg->mops;
 
@@ -338,6 +348,7 @@ benchmark_worker(void* argptr) {
 					*(int32_t*)foreign->pointers[iop] = (int32_t)size;
 					for (size_t page = 1; page < size / 4096; ++page)
 						*((char*)(foreign->pointers[iop]) + (page * 4096)) = 1;
+					*((char*)(foreign->pointers[iop]) + (size - 1)) = 1;
 					allocated += (int32_t)size;
 					++arg->mops;
 
@@ -378,6 +389,7 @@ benchmark_worker(void* argptr) {
 				*(int32_t*)pointers[iptr] = (int32_t)size;
 				for (size_t page = 1; page < size / 4096; ++page)
 					*((char*)(pointers[iptr]) + (page * 4096)) = 1;
+				*((char*)(pointers[iptr]) + (size - 1)) = 1;
 				allocated += (int32_t)size;
 				++arg->mops;
 
@@ -585,8 +597,6 @@ int main(int argc, char** argv) {
 	benchmark_arg* arg;
 	uintptr_t* thread_handle;
 	FILE* fd;
-
-	benchmark_thread_initialize();
 	
 	arg = benchmark_malloc(0, sizeof(benchmark_arg) * thread_count);
 	thread_handle = benchmark_malloc(0, sizeof(thread_handle) * thread_count);

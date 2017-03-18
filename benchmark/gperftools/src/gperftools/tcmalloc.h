@@ -45,7 +45,7 @@
 #define TC_VERSION_STRING "gperftools 2.5"
 
 /* For struct mallinfo, if it's defined. */
-#if 0
+#if 1
 # include <malloc.h>
 #endif
 
@@ -100,7 +100,7 @@ extern "C" {
 
   PERFTOOLS_DLL_DECL void tc_malloc_stats(void) PERFTOOLS_THROW;
   PERFTOOLS_DLL_DECL int tc_mallopt(int cmd, int value) PERFTOOLS_THROW;
-#if 0
+#if 1
   PERFTOOLS_DLL_DECL struct mallinfo tc_mallinfo(void) PERFTOOLS_THROW;
 #endif
 

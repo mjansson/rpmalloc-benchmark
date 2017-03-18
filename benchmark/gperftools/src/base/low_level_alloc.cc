@@ -37,7 +37,6 @@
 #include "base/low_level_alloc.h"
 #include "base/dynamic_annotations.h"
 #include "base/spinlock.h"
-#include "base/thread_annotations.h"
 #include "base/logging.h"
 #include "malloc_hook-inl.h"
 #include <gperftools/malloc_hook.h>

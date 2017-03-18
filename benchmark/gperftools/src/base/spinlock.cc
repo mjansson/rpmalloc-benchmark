@@ -45,10 +45,8 @@
 
 static int adaptive_spin_count = 0;
 
-#ifndef SPIN_LOCK_INTERNAL_WIN32
 const base::LinkerInitialized SpinLock::LINKER_INITIALIZED =
     base::LINKER_INITIALIZED;
-#endif
 
 namespace {
 struct SpinLock_InitHelper {
@@ -74,7 +72,6 @@ inline void SpinlockPause(void) {
 
 }  // unnamed namespace
 
-#ifndef SPIN_LOCK_INTERNAL_WIN32
 // Monitor the lock to see if its value changes within some time
 // period (adaptive_spin_count loop iterations). The last value read
 // from the lock is returned from the method.
@@ -130,4 +127,3 @@ void SpinLock::SlowUnlock() {
   // wake waiter if necessary
   base::internal::SpinLockWake(&lockword_, false);
 }
-#endif
