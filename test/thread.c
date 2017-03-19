@@ -1,6 +1,12 @@
 
 #include <thread.h>
 
+#ifdef _MSC_VER
+#  define ATTRIBUTE_NORETURN
+#else
+#  define ATTRIBUTE_NORETURN __attribute__((noreturn))
+#endif
+
 #ifdef _WIN32
 #  include <windows.h>
 #  include <process.h>
@@ -39,10 +45,10 @@ thread_run(thread_arg* arg) {
 #endif
 }
 
-void __attribute__((noreturn))
+void ATTRIBUTE_NORETURN
 thread_exit(void* value) {
 #ifdef _WIN32
-	...
+
 #else
 	pthread_exit(value);
 #endif
