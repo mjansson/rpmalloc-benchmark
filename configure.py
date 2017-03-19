@@ -84,3 +84,18 @@ if not target.is_android():
 	gperftools_lib = generator.lib(module = 'gperftools', sources = gperftoolsbasesources + gperftoolssources, basepath = 'benchmark', includepaths = includepaths + gperftoolsincludepaths, externalsources = True)
 	gperftools_depend_libs = ['gperftools', 'benchmark', 'test']
 	generator.bin(module = 'gperftools', sources = ['benchmark.c'], binname = 'benchmark-tcmalloc', basepath = 'benchmark', implicit_deps = [gperftools_lib, benchmark_lib, test_lib], libs = gperftools_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+
+jemallocincludepaths = [
+	os.path.join('benchmark', 'jemalloc', 'include'),
+	os.path.join('benchmark', 'jemalloc', 'include', 'jemalloc'),
+	os.path.join('benchmark', 'jemalloc', 'include', 'jemalloc', 'internal')
+]
+jemallocsources = [
+	'jemalloc.c', 'arena.c', 'base.c', 'bitmap.c', 'ckh.c', 'ctl.c', 'extent.c', 'extent_dss.c',
+	'extent_mmap.c', 'hash.c', 'large.c', 'malloc_io.c', 'mutex.c', 'nstime.c', 'pages.c',
+	'prng.c', 'prof.c', 'rtree.c', 'stats.c', 'spin.c', 'tcache.c', 'ticker.c', 'tsd.c', 'witness.c'
+]
+jemallocsources = [os.path.join('src', path) for path in jemallocsources]
+jemalloc_lib = generator.lib(module = 'jemalloc', sources = jemallocsources, basepath = 'benchmark', includepaths = includepaths + jemallocincludepaths, externalsources = True)
+jemalloc_depend_libs = ['jemalloc', 'benchmark', 'test']
+generator.bin(module = 'jemalloc', sources = ['benchmark.c'], binname = 'benchmark-jemalloc', basepath = 'benchmark', implicit_deps = [jemalloc_lib, benchmark_lib, test_lib], libs = jemalloc_depend_libs, includepaths = includepaths)

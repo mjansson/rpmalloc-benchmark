@@ -160,7 +160,7 @@ static size_t random_size_lin[2000];
 static size_t random_size_exp[2000];
 static size_t* random_size_arr;
 
-static size_t num_alloc_ops[] = {
+static size_t num_alloc_ops[311] = {
 	58,	56,	65,	85,	83,	70,	33,	58,	69,	32,
 	70,	88,	58,	81,	98,	91,	57,	32,	42,	88,
 	84,	93,	80,	89,	34,	83,	86,	48,	32,	70,
@@ -195,7 +195,7 @@ static size_t num_alloc_ops[] = {
 	74
 };
 
-static size_t num_free_ops[] = {
+static size_t num_free_ops[257] = {
 	94,	51,	88,	47,	51,	76,	99,	47,	48,	96,
 	74,	61,	51,	40,	76,	31,	41,	61,	93,	55,
 	78,	87,	83,	35,	35,	59,	58,	86,	97,	80,
@@ -313,12 +313,12 @@ benchmark_worker(void* argptr) {
 	arg->ticks = 0;
 	arg->mops = 0;
 	for (size_t iter = 0; iter < 2; ++iter) {
-		size_t size_index = 0;
+		size_t size_index = ((arg->index + 1) * ((iter + 1) * 37)) % random_size_count;
+
 		uint64_t iter_ticks_elapsed = 0;
 		int do_foreign = 1;
 
 		for (size_t iloop = 0; iloop < arg->loop_count; ++iloop) {
-			size_index = ((arg->index + 1) * ((iter + 1) * 3 + (iloop + 1) * 7)) % random_size_count;
 
 			foreign = get_cross_thread_memory(&arg->foreign);
 
@@ -346,7 +346,7 @@ benchmark_worker(void* argptr) {
 				allocated += (int32_t)size;
 				++arg->mops;
 
-				alloc_idx = (alloc_idx + 1) % arg->alloc_count;
+				alloc_idx = (alloc_idx + 3) % arg->alloc_count;
 				size_index = (size_index + 1) % random_size_count;
 			}
 
@@ -359,7 +359,7 @@ benchmark_worker(void* argptr) {
 					pointers[free_idx] = 0;
 				}
 
-				free_idx = (free_idx + 1) % arg->alloc_count;
+				free_idx = (free_idx + 5) % arg->alloc_count;
 			}
 
 			for (iop = 0; iop < alloc_op_count; ++iop) {
@@ -379,7 +379,7 @@ benchmark_worker(void* argptr) {
 				allocated += (int32_t)size;
 				++arg->mops;
 
-				alloc_idx = (alloc_idx + 1) % arg->alloc_count;
+				alloc_idx = (alloc_idx + 7) % arg->alloc_count;
 				size_index = (size_index + 1) % random_size_count;
 			}
 
