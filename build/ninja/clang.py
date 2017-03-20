@@ -105,6 +105,8 @@ class ClangToolchain(toolchain.Toolchain):
     self.cflags += ['-std=c11']
     if self.target.is_macosx() or self.target.is_ios():
       self.cxxflags += ['-std=c++11', '-stdlib=libc++']
+    if self.target.is_linux():
+      self.cxxflags += ['-std=gnu++11']
 
     self.cexternflags = []
     self.cxxexternflags = []

@@ -96,6 +96,20 @@ jemallocsources = [
 	'prng.c', 'prof.c', 'rtree.c', 'stats.c', 'spin.c', 'tcache.c', 'ticker.c', 'tsd.c', 'witness.c'
 ]
 jemallocsources = [os.path.join('src', path) for path in jemallocsources]
-jemalloc_lib = generator.lib(module = 'jemalloc', sources = jemallocsources, basepath = 'benchmark', includepaths = includepaths + jemallocincludepaths, externalsources = True)
-jemalloc_depend_libs = ['jemalloc', 'benchmark', 'test']
-generator.bin(module = 'jemalloc', sources = ['benchmark.c'], binname = 'benchmark-jemalloc', basepath = 'benchmark', implicit_deps = [jemalloc_lib, benchmark_lib, test_lib], libs = jemalloc_depend_libs, includepaths = includepaths)
+if not target.is_windows():
+	jemalloc_lib = generator.lib(module = 'jemalloc', sources = jemallocsources, basepath = 'benchmark', includepaths = includepaths + jemallocincludepaths, externalsources = True)
+	jemalloc_depend_libs = ['jemalloc', 'benchmark', 'test']
+	generator.bin(module = 'jemalloc', sources = ['benchmark.c'], binname = 'benchmark-jemalloc', basepath = 'benchmark', implicit_deps = [jemalloc_lib, benchmark_lib, test_lib], libs = jemalloc_depend_libs, includepaths = includepaths)
+
+scallocincludepaths = [
+	os.path.join('benchmark', 'scalloc', 'src'),
+	os.path.join('benchmark', 'scalloc', 'src', 'platform')
+]
+scallocsources = [
+	'glue.cc'
+]
+scallocsources = [os.path.join('src', path) for path in scallocsources]
+if not target.is_windows():
+	scalloc_lib = generator.lib(module = 'scalloc', sources = scallocsources, basepath = 'benchmark', includepaths = includepaths + scallocincludepaths, externalsources = True)
+	scalloc_depend_libs = ['scalloc', 'benchmark', 'test']
+	generator.bin(module = 'scalloc', sources = ['benchmark.c'], binname = 'benchmark-scalloc', basepath = 'benchmark', implicit_deps = [scalloc_lib, benchmark_lib, test_lib], libs = scalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
