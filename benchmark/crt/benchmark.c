@@ -2,8 +2,9 @@
 #include <benchmark.h>
 #include <string.h>
 #include <stdlib.h>
-#ifdef _WIN32
-#include <malloc.h>
+
+#ifndef __APPLE__
+#  include <malloc.h>
 #endif
 
 int
@@ -30,13 +31,15 @@ void*
 benchmark_malloc(size_t alignment, size_t size) {
 #ifdef _WIN32
 	return _aligned_malloc(size, alignment ? alignment : 4);
-#else
+#elif defined(__APPLE__)
 	if (alignment) {
 		void* ptr = 0;
 		posix_memalign(&ptr, alignment, size);
 		return ptr;
 	}
 	return malloc(size);
+#else
+	return alignment ? memalign(alignment, size) : malloc(size);
 #endif
 }
 

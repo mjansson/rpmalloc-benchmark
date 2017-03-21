@@ -96,7 +96,7 @@ pow2_ceil_zu(size_t x) {
 #endif
 }
 
-#if (defined(__i386__) || defined(__amd64__) || defined(__x86_64__)) && !defined(__clang__)
+#if 0 /* (defined(__i386__) || defined(__amd64__) || defined(__x86_64__)) */
 BIT_UTIL_INLINE unsigned
 lg_floor(size_t x) {
 	size_t ret;
