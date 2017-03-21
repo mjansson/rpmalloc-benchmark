@@ -61,24 +61,28 @@
  */
 #define JEMALLOC_HAVE_BUILTIN_CLZ 
 
+#ifdef __APPLE__
 /*
  * Defined if os_unfair_lock_*() functions are available, as provided by Darwin.
  */
-/* #undef JEMALLOC_OS_UNFAIR_LOCK */
+#define JEMALLOC_OS_UNFAIR_LOCK
 
 /*
  * Defined if OSSpin*() functions are available, as provided by Darwin, and
  * documented in the spinlock(3) manual page.
  */
-/* #undef JEMALLOC_OSSPIN */
+#define JEMALLOC_OSSPIN
+#endif
 
 /* Defined if syscall(2) is usable. */
 #define JEMALLOC_USE_SYSCALL 
 
+#ifndef __APPLE__
 /*
  * Defined if secure_getenv(3) is available.
  */
 #define JEMALLOC_HAVE_SECURE_GETENV 
+#endif
 
 /*
  * Defined if issetugid(2) is available.
@@ -88,10 +92,12 @@
 /* Defined if pthread_atfork(3) is available. */
 #define JEMALLOC_HAVE_PTHREAD_ATFORK 
 
+#ifndef __APPLE__
 /*
  * Defined if clock_gettime(CLOCK_MONOTONIC_COARSE, ...) is available.
  */
 #define JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE 1
+#endif
 
 /*
  * Defined if clock_gettime(CLOCK_MONOTONIC, ...) is available.
@@ -283,7 +289,9 @@
  * Defined if transparent huge pages are supported via the MADV_[NO]HUGEPAGE
  * arguments to madvise(2).
  */
+#ifndef __APPLE__
 #define JEMALLOC_THP 
+#endif
 
 /* Define if operating system has alloca.h header. */
 #define JEMALLOC_HAS_ALLOCA_H 1
@@ -315,8 +323,10 @@
 /* Adaptive mutex support in pthreads. */
 #define JEMALLOC_HAVE_PTHREAD_MUTEX_ADAPTIVE_NP 
 
+#ifndef __APPLE__
 /* GNU specific sched_getcpu support */
 #define JEMALLOC_HAVE_SCHED_GETCPU 
+#endif
 
 /*
  * If defined, jemalloc symbols are not exported (doesn't work when

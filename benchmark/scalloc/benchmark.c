@@ -1,7 +1,7 @@
 
 #include <benchmark.h>
 
-#include <malloc.h>
+#include <stdlib.h>
 
 extern void
 _scalloc_benchmark_init(void);
@@ -42,7 +42,16 @@ benchmark_thread_finalize(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
+#ifdef __APPLE__
+	if (alignment) {
+		void* ptr = 0;
+		posix_memalign(&ptr, alignment, size);
+		return ptr;
+	}
+	return malloc(size);
+#else
 	return alignment ? memalign(alignment, size) : malloc(size);
+#endif
 }
 
 void

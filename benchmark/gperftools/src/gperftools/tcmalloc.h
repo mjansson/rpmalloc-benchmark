@@ -45,7 +45,9 @@
 #define TC_VERSION_STRING "gperftools 2.5"
 
 /* For struct mallinfo, if it's defined. */
-#if 1
+#if defined(__APPLE__)
+# include <sys/malloc.h>
+#else
 # include <malloc.h>
 #endif
 
