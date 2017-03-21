@@ -3,6 +3,10 @@
 
 #include <stdlib.h>
 
+#ifndef __APPLE__
+#  include <malloc.h>
+#endif
+
 extern void
 _scalloc_benchmark_init(void);
 

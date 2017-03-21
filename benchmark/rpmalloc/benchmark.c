@@ -42,5 +42,13 @@ benchmark_free(void* ptr) {
 
 const char*
 benchmark_name(void) {
-	return "rpmalloc";
+#if defined(ENABLE_UNLIMITED_CACHE)
+	return "rpmalloc-unlimit";
+#elif defined(DISABLE_CACHE)
+	return "rpmalloc-nocache";
+#elif defined(ENABLE_SPACE_PRIORITY_CACHE)
+	return "rpmalloc-size";
+#else
+	return "rpmalloc-perf";
+#endif
 }
