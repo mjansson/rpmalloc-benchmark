@@ -49,6 +49,6 @@ benchmark_name(void) {
 #elif defined(ENABLE_SPACE_PRIORITY_CACHE)
 	return "rpmalloc-size";
 #else
-	return "rpmalloc-perf";
+	return "rpmalloc";
 #endif
 }
