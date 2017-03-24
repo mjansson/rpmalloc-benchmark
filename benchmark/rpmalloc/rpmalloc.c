@@ -21,7 +21,7 @@
 // Presets for cache limits
 #if defined(ENABLE_UNLIMITED_CACHE)
 // Leave all limits undefined -> unlimited caches
-#define MAX_SPAN_CACHE_TRANSFER 4
+#define MAX_SPAN_CACHE_TRANSFER 8
 #elif defined(DISABLE_CACHE)
 #define THREAD_SPAN_CACHE_LIMIT(page_count, active_threads)   (((page_count)*0) + ((active_threads)*0))
 #define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (((page_count)*0) + ((active_threads)*0))
@@ -30,8 +30,8 @@
 #define MAX_SPAN_CACHE_TRANSFER 4
 #elif defined(ENABLE_SPACE_PRIORITY_CACHE)
 // Space priority cache limits
-#define THREAD_SPAN_CACHE_LIMIT(page_count, active_threads)   (4 + (((page_count)/16) * 4) + ((active_threads)*0))
-#define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (8 + (((page_count)/16) * 8) + ((active_threads)*0))
+#define THREAD_SPAN_CACHE_LIMIT(page_count, active_threads)   (6 + (((page_count)/16) * 4) + (active_threads))
+#define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (18 + (((page_count)/16) * 8) + (active_threads))
 #define THREAD_LARGE_CACHE_LIMIT(span_count)  (4 + ((span_count)*0))
 #define GLOBAL_LARGE_CACHE_LIMIT(span_count)  (16 + ((span_count)*0))
 #define MAX_SPAN_CACHE_TRANSFER 4
@@ -42,11 +42,11 @@
 //! Limit of global cache in number of spans for each page count class (undefine for unlimited cache - i.e never free mapped pages)
 #define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (256 + (16 * (active_threads)) + (((page_count)/16) * 128))
 //! Limit of thread cache for each large span count class (undefine for unlimited cache - i.e never release spans to global cache unless thread finishes)
-#define THREAD_LARGE_CACHE_LIMIT(span_count)  (132 - ((span_count) * 4))
+#define THREAD_LARGE_CACHE_LIMIT(span_count)  (90 - ((span_count) * 2))
 //! Limit of global cache for each large span count class (undefine for unlimited cache - i.e never free mapped pages)
 #define GLOBAL_LARGE_CACHE_LIMIT(span_count)  (256 - ((span_count) * 4))
 //! Maximum number of spans to transfer between thread and global cache
-#define MAX_SPAN_CACHE_TRANSFER 4
+#define MAX_SPAN_CACHE_TRANSFER 8
 #endif
 
 
@@ -994,7 +994,7 @@ _memory_usable_size(void* p) {
 	size_t current_pages = (size_t)span->next_span;
 	return (current_pages * (size_t)PAGE_SIZE) - SPAN_HEADER_SIZE;
 }
-#include <stdio.h>
+
 static void
 _memory_adjust_size_class(size_t iclass) {
 	size_t block_size = _memory_size_class[iclass].size;

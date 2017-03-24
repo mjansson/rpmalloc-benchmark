@@ -73,6 +73,6 @@ for name in rpmalloc-unlimit rpmalloc jemalloc lockfree-malloc tcmalloc scalloc 
 	$executable 6 0 2 2 100000 50000 1500 512 160000
 	$executable 7 0 2 2 100000 50000 1500 512 160000
 	$executable 8 0 2 2 100000 50000 1500 512 160000
-	$executable 9 0 2 2 100000 50000 5100 512 160000
+	$executable 9 0 2 2 100000 50000 1500 512 160000
 	$executable 10 0 2 2 100000 50000 1500 512 160000
 done

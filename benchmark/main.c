@@ -262,6 +262,25 @@ get_process_memory_usage(void) {
 #endif
 }
 
+static size_t
+get_process_peak_memory_usage(void) {
+#if defined(_WIN32)
+	PROCESS_MEMORY_COUNTERS counters;
+	memset(&counters, 0, sizeof(counters));
+	counters.cb = sizeof(counters);
+	GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters));
+	return counters.PeakWorkingSetSize;
+#else
+	struct rusage rusage;
+	getrusage(RUSAGE_SELF, &rusage);
+#if defined(__APPLE__)
+	return (size_t)rusage.ru_maxrss;
+#else
+	return (size_t)rusage.ru_maxrss * 1024;
+#endif
+#endif
+}
+
 static void
 put_cross_thread_memory(atomicptr_t* ptr, thread_pointers* pointers) {
 	void* prev;
@@ -709,7 +728,7 @@ int main(int argc, char** argv) {
 	fflush(stdout);
 
 	size_t memory_usage = 0;
-	size_t peak_allocated = 0;
+	size_t sample_allocated = 0;
 	size_t cur_allocated = 0;
 	uint64_t mops = 0;
 	uint64_t ticks = 0;
@@ -756,8 +775,8 @@ int main(int argc, char** argv) {
 			size_t thread_allocated = (size_t)atomic_load32(&arg[ithread].allocated);
 			cur_allocated += thread_allocated;
 		}
-		if (cur_allocated > peak_allocated) {
-			peak_allocated = cur_allocated;
+		if (cur_allocated > sample_allocated) {
+			sample_allocated = cur_allocated;
 			memory_usage = get_process_memory_usage();
 		}
 
@@ -777,8 +796,8 @@ int main(int argc, char** argv) {
 			size_t thread_allocated = (size_t)atomic_load32(&arg[ithread].allocated);
 			cur_allocated += thread_allocated;
 		}
-		if (cur_allocated > peak_allocated) {
-			peak_allocated = cur_allocated;
+		if (cur_allocated > sample_allocated) {
+			sample_allocated = cur_allocated;
 			memory_usage = get_process_memory_usage();
 		}
 
@@ -811,20 +830,22 @@ int main(int argc, char** argv) {
 	benchmark_free(thread_handle);
 	benchmark_free(arg);
 
+	size_t peak_allocated = get_process_peak_memory_usage();
 	double time_elapsed = timer_ticks_to_seconds(ticks);
 	double average_mops = (double)mops / time_elapsed;
 	char linebuf[128];
-	int len = snprintf(linebuf, sizeof(linebuf), "%u,%u,%u\n",
+	int len = snprintf(linebuf, sizeof(linebuf), "%u,%u,%u,%u\n",
 		                (unsigned int)average_mops,
 		                (unsigned int)memory_usage,
-	                    (unsigned int)peak_allocated);
+	                    (unsigned int)sample_allocated,
+		                (unsigned int)peak_allocated);
 	fwrite(linebuf, (len > 0) ? (size_t)len : 0, 1, fd);
 	fflush(fd);
 
-	printf("%u memory ops/CPU second (%uMiB -> %uMiB bytes peak, %.0f%% overhead)\n",
-		    (unsigned int)average_mops,
-	        (unsigned int)(peak_allocated / (1024 * 1024)), (unsigned int)(memory_usage / (1024 * 1024)),
-	        100.0 * ((double)memory_usage - (double)peak_allocated) / (double)peak_allocated);
+	printf("%u memory ops/CPU second (%uMiB peak, %uMiB -> %uMiB bytes sample, %.0f%% overhead)\n",
+		    (unsigned int)average_mops, (unsigned int)(peak_allocated / (1024 * 1024)),
+	        (unsigned int)(sample_allocated / (1024 * 1024)), (unsigned int)(memory_usage / (1024 * 1024)),
+	        100.0 * ((double)memory_usage - (double)sample_allocated) / (double)sample_allocated);
 	fflush(stdout);
 
 	fclose(fd);
