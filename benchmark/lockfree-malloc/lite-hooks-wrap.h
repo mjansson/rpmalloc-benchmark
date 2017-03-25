@@ -16,7 +16,9 @@
 #define __LOCKFREE_LITE_HOOKS_WRAP_H 1
 
 #include "lite-malloc.h"
-#ifndef __FreeBSD__
+#if defined(__APPLE__)
+#include <sys/malloc.h>
+#elif !defined(__FreeBSD__)
 #include <malloc.h>
 #endif
 
