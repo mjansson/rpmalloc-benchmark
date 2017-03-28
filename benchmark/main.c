@@ -459,7 +459,7 @@ benchmark_worker(void* argptr) {
 			if (atomic_load32(&benchmark_threads_sync) > 0)
 				do_foreign = 0; //one thread completed
 
-			if (timer_ticks_to_seconds(iter_ticks_elapsed) > 300) {
+			if (timer_ticks_to_seconds(iter_ticks_elapsed) > 120) {
 				aborted = 1;
 				break;
 			}
