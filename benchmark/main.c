@@ -52,6 +52,8 @@ struct thread_pointers {
 static int benchmark_start;
 static atomic32_t benchmark_threads_sync;
 static atomic32_t cross_thread_counter;
+static size_t alloc_scatter;
+static size_t free_scatter;
 
 //Fixed set of random numbers
 static size_t random_size[2000] = {
@@ -224,6 +226,16 @@ static size_t num_free_ops[257] = {
 	97,	40,	56,	66,	91,	64,	93
 };
 
+static size_t primes[] = {
+	7, 11, 13, 17, 19, 23, 29, 
+	31, 37, 41, 43, 47, 53, 59,
+	61, 67, 71, 73, 79, 83, 89, 97,
+	101, 103, 107, 109, 113, 127,
+	131, 137, 139, 149, 151, 157,
+	163, 167, 173, 179, 181, 191,
+	193, 197, 199
+};
+
 #if defined(_WIN32)
 #include <Windows.h>
 #include <Psapi.h>
@@ -344,32 +356,9 @@ benchmark_worker(void* argptr) {
 			allocated = 0;
 			tick_start = timer_current();
 
-			benchmark_thread_collect();
-
-			const size_t alloc_op_count = num_alloc_ops[(iter + iloop) % alloc_ops_count];
-			for (iop = 0; iop < alloc_op_count; ++iop) {
-				if (pointers[alloc_idx]) {
-					allocated -= *(int32_t*)pointers[alloc_idx];
-					benchmark_free(pointers[alloc_idx]);
-					++arg->mops;
-				}
-				size_t size = arg->min_size;
-				if (arg->mode == MODE_RANDOM)
-					size += random_size_arr[size_index];
-				pointers[alloc_idx] = benchmark_malloc((size < 4096) ? alignment[(size_index + iop) % 3] : 0, size);
-				*(int32_t*)pointers[alloc_idx] = (int32_t)size;
-				//Make sure to write to each page to commit it for measuring memory usage
-				for (size_t page = 1; page < size / 4096; ++page)
-					*((char*)(pointers[alloc_idx]) + (page * 4096)) = 1;
-				*((char*)(pointers[alloc_idx]) + (size - 1)) = 1;
-				allocated += (int32_t)size;
-				++arg->mops;
-
-				alloc_idx = (alloc_idx + 3) % arg->alloc_count;
-				size_index = (size_index + 1) % random_size_count;
-			}
-
 			const size_t free_op_count = num_free_ops[(iter + iloop) % free_ops_count];
+			const size_t alloc_op_count = num_alloc_ops[(iter + iloop) % alloc_ops_count];
+
 			for (iop = 0; iop < free_op_count; ++iop) {
 				if (pointers[free_idx]) {
 					allocated -= *(int32_t*)pointers[free_idx];
@@ -378,28 +367,7 @@ benchmark_worker(void* argptr) {
 					pointers[free_idx] = 0;
 				}
 
-				free_idx = (free_idx + 5) % arg->alloc_count;
-			}
-
-			for (iop = 0; iop < alloc_op_count; ++iop) {
-				if (pointers[alloc_idx]) {
-					allocated -= *(int32_t*)pointers[alloc_idx];
-					benchmark_free(pointers[alloc_idx]);
-					++arg->mops;
-				}
-				size_t size = arg->min_size;
-				if (arg->mode == MODE_RANDOM)
-					size += random_size_arr[(size_index + 2) % random_size_count];
-				pointers[alloc_idx] = benchmark_malloc((size < 4096) ? alignment[(size_index + iop) % 3] : 0, size);
-				*(int32_t*)pointers[alloc_idx] = (int32_t)size;
-				for (size_t page = 1; page < size / 4096; ++page)
-					*((char*)(pointers[alloc_idx]) + (page * 4096)) = 1;
-				*((char*)(pointers[alloc_idx]) + (size - 1)) = 1;
-				allocated += (int32_t)size;
-				++arg->mops;
-
-				alloc_idx = (alloc_idx + 7) % arg->alloc_count;
-				size_index = (size_index + 1) % random_size_count;
+				free_idx = (free_idx + free_scatter) % arg->alloc_count;
 			}
 
 			while (foreign) {
@@ -417,6 +385,28 @@ benchmark_worker(void* argptr) {
 				benchmark_free(foreign);
 				arg->mops += 2;
 				foreign = next;
+			}
+
+			for (iop = 0; iop < alloc_op_count; ++iop) {
+				if (pointers[alloc_idx]) {
+					allocated -= *(int32_t*)pointers[alloc_idx];
+					benchmark_free(pointers[alloc_idx]);
+					++arg->mops;
+				}
+				size_t size = arg->min_size;
+				if (arg->mode == MODE_RANDOM)
+					size += random_size_arr[(size_index + 2) % random_size_count];
+				pointers[alloc_idx] = benchmark_malloc((size < 4096) ? alignment[(size_index + iop) % 3] : 0, size);
+				//Make sure to write to each page to commit it for measuring memory usage
+				*(int32_t*)pointers[alloc_idx] = (int32_t)size;
+				for (size_t page = 1; page < size / 4096; ++page)
+					*((char*)(pointers[alloc_idx]) + (page * 4096)) = 1;
+				*((char*)(pointers[alloc_idx]) + (size - 1)) = 1;
+				allocated += (int32_t)size;
+				++arg->mops;
+
+				alloc_idx = (alloc_idx + alloc_scatter) % arg->alloc_count;
+				size_index = (size_index + 1) % random_size_count;
 			}
 
 			foreign = 0;
@@ -516,7 +506,6 @@ benchmark_worker(void* argptr) {
 					arg->mops += 2;
 					foreign = next;
 				}
-				benchmark_thread_collect();
 				ticks_elapsed = timer_current() - tick_start;
 				arg->ticks += ticks_elapsed;
 			}
@@ -575,7 +564,6 @@ benchmark_worker(void* argptr) {
 				arg->mops += 2;
 				foreign = next;
 			}
-			benchmark_thread_collect();
 			ticks_elapsed = timer_current() - tick_start;
 			arg->ticks += ticks_elapsed;
 		}
@@ -650,7 +638,7 @@ int main(int argc, char** argv) {
 	if (!alloc_count || (alloc_count > 0x00FFFFFF))
 		alloc_count = 10*1024;
 	if (!op_count || (op_count > 0x00FFFFFF))
-		op_count = 100;
+		op_count = 1000;
 	if ((mode == MODE_RANDOM) && (!max_size || (max_size < min_size))) {
 		printf("Invalid min/max size for random mode: %s %s\n", argv[7], (argc > 8) ? argv[8] : "<missing>");
 		return -3;
@@ -662,6 +650,14 @@ int main(int argc, char** argv) {
 
 	if (thread_count == 1)
 		cross_rate = 0;
+
+	size_t iprime = 0;
+	alloc_scatter = primes[iprime];
+	while ((alloc_count % alloc_scatter) == 0)
+		alloc_scatter = primes[++iprime];
+	free_scatter = primes[++iprime];
+	while ((alloc_count % free_scatter) == 0)
+		free_scatter = primes[++iprime];
 
 	//Setup the random size tables
 	size_t size_range = max_size - min_size;
