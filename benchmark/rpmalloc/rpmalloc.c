@@ -20,33 +20,30 @@
 
 // Presets for cache limits
 #if defined(ENABLE_UNLIMITED_CACHE)
-// Leave all limits undefined -> unlimited caches
-#define MAX_SPAN_CACHE_TRANSFER 8
+// Unlimited caches
+#define MIN_SPAN_CACHE_RELEASE 16
+#define MAX_SPAN_CACHE_DIVISOR 1
 #elif defined(DISABLE_CACHE)
-#define THREAD_SPAN_CACHE_LIMIT(page_count, active_threads)   (((page_count)*0) + ((active_threads)*0))
-#define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (((page_count)*0) + ((active_threads)*0))
-#define THREAD_LARGE_CACHE_LIMIT(span_count)  ((span_count)*0)
-#define GLOBAL_LARGE_CACHE_LIMIT(span_count)  ((span_count)*0)
-#define MAX_SPAN_CACHE_TRANSFER 4
+//Disable cache
+#define MIN_SPAN_CACHE_RELEASE 1
+#define MAX_SPAN_CACHE_DIVISOR 0
 #elif defined(ENABLE_SPACE_PRIORITY_CACHE)
 // Space priority cache limits
-#define THREAD_SPAN_CACHE_LIMIT(page_count, active_threads)   (6 + (((page_count)/16) * 4) + (active_threads))
-#define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (18 + (((page_count)/16) * 8) + (active_threads))
-#define THREAD_LARGE_CACHE_LIMIT(span_count)  (4 + ((span_count)*0))
-#define GLOBAL_LARGE_CACHE_LIMIT(span_count)  (16 + ((span_count)*0))
-#define MAX_SPAN_CACHE_TRANSFER 4
+#define MIN_SPAN_CACHE_SIZE 8
+#define MIN_SPAN_CACHE_RELEASE 8
+#define MAX_SPAN_CACHE_DIVISOR 16
+#define GLOBAL_SPAN_CACHE_MULTIPLIER 1
 #else
 // Default - performance priority cache limits
 //! Limit of thread cache in number of spans for each page count class (undefine for unlimited cache - i.e never release spans to global cache unless thread finishes)
-#define THREAD_SPAN_CACHE_LIMIT(page_count, active_threads)   (32 + (4 * (active_threads)) + (((page_count)/16) * 32))
-//! Limit of global cache in number of spans for each page count class (undefine for unlimited cache - i.e never free mapped pages)
-#define GLOBAL_SPAN_CACHE_LIMIT(page_count, active_threads)   (256 + (16 * (active_threads)) + (((page_count)/16) * 128))
-//! Limit of thread cache for each large span count class (undefine for unlimited cache - i.e never release spans to global cache unless thread finishes)
-#define THREAD_LARGE_CACHE_LIMIT(span_count)  (90 - ((span_count) * 2))
-//! Limit of global cache for each large span count class (undefine for unlimited cache - i.e never free mapped pages)
-#define GLOBAL_LARGE_CACHE_LIMIT(span_count)  (256 - ((span_count) * 4))
-//! Maximum number of spans to transfer between thread and global cache
-#define MAX_SPAN_CACHE_TRANSFER 8
+//! Minimum cache size to remain after a release to global cache
+#define MIN_SPAN_CACHE_SIZE 8
+//! Minimum number of spans to transfer between thread and global cache
+#define MIN_SPAN_CACHE_RELEASE 16
+//! Maximum cache size divisor (max cache size will be max allocation count divided by this divisor)
+#define MAX_SPAN_CACHE_DIVISOR 4
+//! Multiplier for global span cache limit (max cache size will be calculated like thread cache and multiplied with this)
+//#define GLOBAL_SPAN_CACHE_MULTIPLIER 8
 #endif
 
 //! Size of heap hashmap
@@ -60,6 +57,11 @@
 #ifndef ENABLE_STATISTICS
 //! Enable statistics collection
 #define ENABLE_STATISTICS         0
+#endif
+
+#ifndef ENABLE_ASSERTS
+//! Enable sanity checks
+#define ENABLE_ASSERTS      1
 #endif
 
 // Platform and arch specifics
@@ -105,6 +107,12 @@
 
 #include <stdint.h>
 #include <string.h>
+
+#if ENABLE_ASSERTS
+#  include <assert.h>
+#else
+#  define assert(x)
+#endif
 
 // Atomic access abstraction
 ALIGNED_STRUCT(atomic32_t, 4) {
@@ -195,8 +203,10 @@ thread_yield(void);
 #define SPAN_MASK                 (~((uintptr_t)SPAN_MAX_SIZE - 1))
 //! Maximum number of memory pages in a span
 #define SPAN_MAX_PAGE_COUNT       (SPAN_MAX_SIZE / PAGE_SIZE)
+//! Span size class granularity
+#define SPAN_CLASS_GRANULARITY    4
 //! Number of size classes for spans
-#define SPAN_CLASS_COUNT          SPAN_MAX_PAGE_COUNT
+#define SPAN_CLASS_COUNT          (SPAN_MAX_PAGE_COUNT / SPAN_CLASS_GRANULARITY)
 
 //! Granularity of a small allocation block
 #define SMALL_GRANULARITY         16
@@ -258,6 +268,8 @@ typedef struct size_class_t size_class_t;
 typedef struct span_block_t span_block_t;
 //! Span data union, usage depending on span state
 typedef union span_data_t span_data_t;
+//! Cache data
+typedef struct span_counter_t span_counter_t;
 
 struct span_block_t {
 	//! Free list
@@ -273,8 +285,6 @@ struct span_block_t {
 union span_data_t {
 	//! Span data
 	span_block_t block;
-	//! Span count (for large spans)
-	uint32_t span_count;
 	//! List size (used when span is part of a list)
 	uint32_t list_size;
 };
@@ -293,6 +303,13 @@ struct span_t {
 };
 _Static_assert(sizeof(span_t) <= SPAN_HEADER_SIZE, "span size mismatch");
 
+struct span_counter_t {
+	//! Allocation high water mark
+	uint32_t  max_allocations;
+	//! Current number of allocations
+	uint32_t  current_allocations;
+};
+
 struct heap_t {
 	//! Heap ID
 	int32_t      id;
@@ -306,8 +323,12 @@ struct heap_t {
 	span_t*      size_cache[SIZE_CLASS_COUNT];
 	//! List of free spans for each page count (single linked list)
 	span_t*      span_cache[SPAN_CLASS_COUNT];
+	//! Allocation counters
+	span_counter_t span_counter[SPAN_CLASS_COUNT];
 	//! List of free spans for each large class count (single linked list)
 	span_t*      large_cache[LARGE_CLASS_COUNT];
+	//! Allocation counters for large blocks
+	span_counter_t large_counter[SPAN_CLASS_COUNT];
 	//! Next heap in id list
 	heap_t*      next_heap;
 	//! Next heap in orphan list
@@ -366,6 +387,12 @@ static atomicptr_t _memory_orphan_heaps;
 //! Active heap count
 static atomic32_t _memory_active_heaps;
 
+//! Adaptive cache max allocation count
+static uint32_t _memory_max_allocation[SPAN_CLASS_COUNT];
+
+//! Adaptive cache max allocation count
+static uint32_t _memory_max_allocation_large[LARGE_CLASS_COUNT];
+
 #if ENABLE_STATISTICS
 //! Total number of mapped memory pages
 static atomic32_t _mapped_pages;
@@ -394,18 +421,28 @@ _memory_heap_lookup(int32_t id) {
 	return heap;
 }
 
+//! Get the span size class from page count
+static size_t
+_span_class_from_page_count(size_t page_count) {
+	assert((page_count > 0) && (page_count <= 16));
+	return ((page_count + SPAN_CLASS_GRANULARITY - 1) / SPAN_CLASS_GRANULARITY) - 1;
+}
+
 //! Insert the given list of memory page spans in the global cache for small/medium blocks
 static void
 _memory_global_cache_insert(span_t* first_span, size_t list_size, size_t page_count) {
+	assert((list_size == 1) || (first_span->next_span != 0));
+#if MAX_SPAN_CACHE_DIVISOR > 0
 	while (1) {
-		void* global_span_ptr = atomic_load_ptr(&_memory_span_cache[page_count-1]);
+		size_t span_class_idx = _span_class_from_page_count(page_count);
+		void* global_span_ptr = atomic_load_ptr(&_memory_span_cache[span_class_idx]);
 		if (global_span_ptr != SPAN_LIST_LOCK_TOKEN) {
 			uintptr_t global_list_size = (uintptr_t)global_span_ptr & ~SPAN_MASK;
 			span_t* global_span = (span_t*)((void*)((uintptr_t)global_span_ptr & SPAN_MASK));
 
-#ifdef GLOBAL_SPAN_CACHE_LIMIT
-			size_t active_heaps = (size_t)atomic_load32(&_memory_active_heaps);
-			if (global_list_size >= GLOBAL_SPAN_CACHE_LIMIT(page_count, active_heaps))
+#ifdef GLOBAL_SPAN_CACHE_MULTIPLIER
+			size_t cache_limit = GLOBAL_SPAN_CACHE_MULTIPLIER * (_memory_max_allocation[span_class_idx] / MAX_SPAN_CACHE_DIVISOR);
+			if ((global_list_size >= cache_limit) && (global_list_size > MIN_SPAN_CACHE_SIZE))
 				break;
 #endif
 			//We only have 16 bits for size of list, avoid overflow
@@ -419,10 +456,8 @@ _memory_global_cache_insert(span_t* first_span, size_t list_size, size_t page_co
 			//Insert sublist into global cache
 			global_list_size += list_size;
 			void* first_span_ptr = (void*)((uintptr_t)first_span | global_list_size);
-			if (atomic_cas_ptr(&_memory_span_cache[page_count-1], first_span_ptr, global_span_ptr)) {
-				//Span list is inserted into global cache
+			if (atomic_cas_ptr(&_memory_span_cache[span_class_idx], first_span_ptr, global_span_ptr))
 				return;
-			}
 		}
 		else {
 			//Atomic operation failed, yield timeslice and retry
@@ -430,12 +465,13 @@ _memory_global_cache_insert(span_t* first_span, size_t list_size, size_t page_co
 			atomic_thread_fence_acquire();
 		}
 	}
-
+#endif
 	//Global cache full, release pages
 	for (size_t ispan = 0; ispan < list_size; ++ispan) {
 		span_t* next_span = first_span->next_span;
 		_memory_unmap(first_span, page_count);
 		first_span = next_span;
+		assert(first_span);
 	}
 }
 
@@ -443,7 +479,8 @@ _memory_global_cache_insert(span_t* first_span, size_t list_size, size_t page_co
 static span_t*
 _memory_global_cache_extract(size_t page_count) {
 	span_t* span = 0;
-	atomicptr_t* cache = &_memory_span_cache[page_count-1];
+	size_t span_class_idx = _span_class_from_page_count(page_count);
+	atomicptr_t* cache = &_memory_span_cache[span_class_idx];
 	atomic_thread_fence_acquire();
 	void* global_span_ptr = atomic_load_ptr(cache);
 	while (global_span_ptr) {
@@ -453,6 +490,7 @@ _memory_global_cache_extract(size_t page_count) {
 			//stored in prev_span to quickly skip ahead in the list to get the new head
 			uintptr_t global_span_count = (uintptr_t)global_span_ptr & ~SPAN_MASK;
 			span = (span_t*)((void*)((uintptr_t)global_span_ptr & SPAN_MASK));
+			assert((span->data.list_size == 1) || (span->next_span != 0));
 
 			span_t* new_global_span = span->prev_span;
 			global_span_count -= span->data.list_size;
@@ -479,6 +517,9 @@ _memory_global_cache_extract(size_t page_count) {
     similar to _memory_global_cache_insert */
 static void
 _memory_global_cache_large_insert(span_t* span_list, size_t list_size, size_t span_count) {
+	assert((list_size == 1) || (span_list->next_span != 0));
+	assert(span_list->size_class == (SIZE_CLASS_COUNT + (span_count - 1)));
+#if MAX_SPAN_CACHE_DIVISOR > 0
 	atomicptr_t* cache = &_memory_large_cache[span_count - 1];
 	while (1) {
 		void* global_span_ptr = atomic_load_ptr(cache);
@@ -486,8 +527,9 @@ _memory_global_cache_large_insert(span_t* span_list, size_t list_size, size_t sp
 			uintptr_t global_list_size = (uintptr_t)global_span_ptr & ~SPAN_MASK;
 			span_t* global_span = (span_t*)((void*)((uintptr_t)global_span_ptr & SPAN_MASK));
 
-#ifdef GLOBAL_LARGE_CACHE_LIMIT
-			if ((global_list_size + list_size) >= GLOBAL_LARGE_CACHE_LIMIT(span_count))
+#ifdef GLOBAL_SPAN_CACHE_MULTIPLIER
+			size_t cache_limit = GLOBAL_SPAN_CACHE_MULTIPLIER * (_memory_max_allocation_large[span_count-1] / MAX_SPAN_CACHE_DIVISOR);
+			if ((global_list_size >= cache_limit) && (global_list_size > MIN_SPAN_CACHE_SIZE))
 				break;
 #endif
 			if ((global_list_size + list_size) > 0xFFFF)
@@ -498,21 +540,21 @@ _memory_global_cache_large_insert(span_t* span_list, size_t list_size, size_t sp
 
 			global_list_size += list_size;
 			void* new_global_span_ptr = (void*)((uintptr_t)span_list | global_list_size);
-
-			if (atomic_cas_ptr(cache, new_global_span_ptr, global_span_ptr)) {
+			if (atomic_cas_ptr(cache, new_global_span_ptr, global_span_ptr))
 				return;
-			}
 		}
 		else {
 			thread_yield();
 			atomic_thread_fence_acquire();
 		}
 	}
-
+#endif
+	//Global cache full, release spans
 	for (size_t ispan = 0; ispan < list_size; ++ispan) {
 		span_t* next_span = span_list->next_span;
 		_memory_unmap(span_list, span_count * SPAN_MAX_PAGE_COUNT);
 		span_list = next_span;
+		assert(span_list);
 	}
 }
 
@@ -529,6 +571,8 @@ _memory_global_cache_large_extract(size_t span_count) {
 			atomic_cas_ptr(cache, SPAN_LIST_LOCK_TOKEN, global_span_ptr)) {
 			uintptr_t global_list_size = (uintptr_t)global_span_ptr & ~SPAN_MASK;
 			span = (span_t*)((void*)((uintptr_t)global_span_ptr & SPAN_MASK));
+			assert((span->data.list_size == 1) || (span->next_span != 0));
+			assert(span->size_class == (SIZE_CLASS_COUNT + (span_count - 1)));
 
 			span_t* new_global_span = span->prev_span;
 			global_list_size -= span->data.list_size;
@@ -545,7 +589,6 @@ _memory_global_cache_large_extract(size_t span_count) {
 		atomic_thread_fence_acquire();
 		global_span_ptr = atomic_load_ptr(cache);
 	}
-
 	return span;
 }
 
@@ -579,6 +622,7 @@ use_active:
 		span_t* span = heap->active_span[class_idx];
 		count_t offset = class_size * active_block->free_list;
 		uint32_t* block = pointer_offset(span, SPAN_HEADER_SIZE + offset);
+		assert(span);
 
 		--active_block->free_count;
 		if (!active_block->free_count) {
@@ -597,6 +641,7 @@ use_active:
 				++active_block->free_list;
 				++active_block->first_autolink;
 			}
+			assert(active_block->free_list < size_class->block_count);
 		}
 
 #if ENABLE_STATISTICS
@@ -620,6 +665,7 @@ use_active:
 		//the heap structure for faster access
 		span_t* span = heap->size_cache[class_idx];
 		*active_block = span->data.block;
+		assert(active_block->free_count > 0);
 		span_t* next_span = span->next_span;
 		heap->size_cache[class_idx] = next_span;
 		heap->active_span[class_idx] = span;
@@ -627,7 +673,8 @@ use_active:
 	}
 
 	//Step 4: No semi-used span available, try grab a span from the thread cache
-	span_t* span = heap->span_cache[size_class->page_count-1];
+	size_t span_class_idx = _span_class_from_page_count(size_class->page_count);
+	span_t* span = heap->span_cache[span_class_idx];
 	if (!span) {
 		//Step 5: No span available in the thread cache, try grab a list of spans from the global cache
 		span = _memory_global_cache_extract(size_class->page_count);
@@ -640,11 +687,12 @@ use_active:
 		if (span->data.list_size > 1) {
 			//We got a list of spans, we will use first as active and store remainder in thread cache
 			span_t* next_span = span->next_span;
+			assert(next_span);
 			next_span->data.list_size = span->data.list_size - 1;
-			heap->span_cache[size_class->page_count-1] = next_span;
+			heap->span_cache[span_class_idx] = next_span;
 		}
 		else {
-			heap->span_cache[size_class->page_count-1] = 0;
+			heap->span_cache[span_class_idx] = 0;
 		}
 	}
 	else {
@@ -657,7 +705,6 @@ use_active:
 	atomic_thread_fence_release();
 
 	span->size_class = (count_t)class_idx;
-	span->next_span = 0;
 
 	//If we only have one block we will grab it, otherwise
 	//set span as new span to use for next allocation
@@ -671,6 +718,14 @@ use_active:
 	else {
 		span->data.block.free_count = 0;
 		span->data.block.first_autolink = (uint16_t)size_class->block_count;
+	}
+
+	//Track counters
+	span_counter_t* counter = heap->span_counter + span_class_idx;
+	if (++counter->current_allocations > counter->max_allocations) {
+		counter->max_allocations = counter->current_allocations;
+		if (counter->max_allocations > _memory_max_allocation[span_class_idx])
+			_memory_max_allocation[span_class_idx] = counter->max_allocations;
 	}
 
 #if ENABLE_STATISTICS
@@ -690,48 +745,128 @@ _memory_allocate_large_from_heap(heap_t* heap, size_t size) {
 	size_t num_spans = size / SPAN_MAX_SIZE;
 	if (size % SPAN_MAX_SIZE)
 		++num_spans;
-
-	//Step 1: Check if cache for this large size class (or the following) has a span
 	size_t idx = num_spans - 1;
+
+	if (!idx) {
+		size_t span_class_idx = _span_class_from_page_count(SPAN_MAX_PAGE_COUNT);
+		span_t* span = heap->span_cache[span_class_idx];
+		if (!span) {
+			_memory_deallocate_deferred(heap, 0);
+			span = heap->span_cache[span_class_idx];
+		}
+		if (!span) {
+			//Step 5: No span available in the thread cache, try grab a list of spans from the global cache
+			span = _memory_global_cache_extract(SPAN_MAX_PAGE_COUNT);
+#if ENABLE_STATISTICS
+			if (span)
+				heap->global_to_thread += (size_t)span->data.list_size * SPAN_MAX_PAGE_COUNT * PAGE_SIZE;
+#endif
+		}
+		if (span) {
+			if (span->data.list_size > 1) {
+				//We got a list of spans, we will use first as active and store remainder in thread cache
+				span_t* next_span = span->next_span;
+				assert(next_span);
+				next_span->data.list_size = span->data.list_size - 1;
+				heap->span_cache[span_class_idx] = next_span;
+			}
+			else {
+				heap->span_cache[span_class_idx] = 0;
+			}
+		}
+		else {
+			//Step 6: All caches empty, map in new memory pages
+			span = _memory_map(SPAN_MAX_PAGE_COUNT);
+		}
+
+		//Mark span as owned by this heap and set base data
+		atomic_store32(&span->heap_id, heap->id);
+		atomic_thread_fence_release();
+
+		span->size_class = SIZE_CLASS_COUNT;
+
+		//Track counters
+		span_counter_t* counter = heap->span_counter + span_class_idx;
+		if (++counter->current_allocations > counter->max_allocations) {
+			counter->max_allocations = counter->current_allocations;
+			if (counter->max_allocations > _memory_max_allocation[span_class_idx])
+				_memory_max_allocation[span_class_idx] = counter->max_allocations;
+		}
+
+		return pointer_offset(span, SPAN_HEADER_SIZE);
+	}
+
+use_cache:
+	//Step 1: Check if cache for this large size class (or the following, unless first class) has a span
 	while (!heap->large_cache[idx] && (idx < LARGE_CLASS_COUNT) && (idx < num_spans + 1))
 		++idx;
 	span_t* span = heap->large_cache[idx];
 	if (span) {
 		//Happy path, use from cache
 		if (span->data.list_size > 1) {
-			span->next_span->data.list_size = span->data.list_size - 1;
-			heap->large_cache[idx] = span->next_span;
+			span_t* new_head = span->next_span;
+			assert(new_head);
+			new_head->data.list_size = span->data.list_size - 1;
+			heap->large_cache[idx] = new_head;
 		}
 		else {
 			heap->large_cache[idx] = 0;
 		}
-		span->data.span_count = (uint32_t)(idx + 1);
+
+		span->size_class = SIZE_CLASS_COUNT + (count_t)idx;
+
+		//Increase counter
+		span_counter_t* counter = heap->large_counter + idx;
+		if (++counter->current_allocations > counter->max_allocations) {
+			counter->max_allocations = counter->current_allocations;
+			if (counter->max_allocations > _memory_max_allocation_large[idx])
+				_memory_max_allocation_large[idx] = counter->max_allocations;
+		}
+
+		return pointer_offset(span, SPAN_HEADER_SIZE);
+	}
+
+	//Restore index, we're back to smallest fitting span count
+	idx = num_spans - 1;
+
+	//Step 2: Process deferred deallocation
+	if (_memory_deallocate_deferred(heap, SIZE_CLASS_COUNT + idx))
+		goto use_cache;
+	assert(!heap->large_cache[idx]);
+
+	//Step 3: Extract a list of spans from global cache
+	span = _memory_global_cache_large_extract(num_spans);
+	if (span) {
+#if ENABLE_STATISTICS
+		heap->global_to_thread += (size_t)span->data.list_size * num_spans * SPAN_MAX_SIZE;
+#endif
+		//We got a list from global cache, store remainder in thread cache
+		if (span->data.list_size > 1) {
+			span_t* new_head = span->next_span;
+			assert(new_head);
+			new_head->prev_span = 0;
+			new_head->data.list_size = span->data.list_size - 1;
+			heap->large_cache[idx] = new_head;
+		}
 	}
 	else {
-		//Step 2: Extract a list of spans from global cache
-		idx = num_spans - 1; //Restore index, we're back to smallest fitting span count
-		span = _memory_global_cache_large_extract(num_spans);
-		if (span) {
-#if ENABLE_STATISTICS
-			heap->global_to_thread += (size_t)span->data.list_size * (idx + 1) * SPAN_MAX_SIZE;
-#endif
-			//We got a list from global cache, store remainder in thread cache
-			if (span->data.list_size > 1) {
-				heap->large_cache[idx] = span->next_span;
-				heap->large_cache[idx]->prev_span = 0;
-				heap->large_cache[idx]->data.list_size = span->data.list_size - 1;
-			}
-		}
-		else {
-			//Step 3: Map in more memory pages
-			span = _memory_map(num_spans * SPAN_MAX_PAGE_COUNT);
-			span->size_class = SIZE_CLASS_COUNT;
-		}
-		//Mark span as owned by this heap
-		span->data.span_count = (uint32_t)num_spans;
-		atomic_store32(&span->heap_id, heap->id);
-		atomic_thread_fence_release();
+		//Step 4: Map in more memory pages
+		span = _memory_map(num_spans * SPAN_MAX_PAGE_COUNT);
 	}
+	//Mark span as owned by this heap
+	atomic_store32(&span->heap_id, heap->id);
+	atomic_thread_fence_release();
+
+	span->size_class = SIZE_CLASS_COUNT + (count_t)idx;
+
+	//Increase counter
+	span_counter_t* counter = heap->large_counter + idx;
+	if (++counter->current_allocations > counter->max_allocations) {
+		counter->max_allocations = counter->current_allocations;
+		if (counter->max_allocations > _memory_max_allocation_large[idx])
+			_memory_max_allocation_large[idx] = counter->max_allocations;
+	}
+
 	return pointer_offset(span, SPAN_HEADER_SIZE);
 }
 
@@ -804,6 +939,48 @@ _memory_list_remove(span_t** head, span_t* span) {
 	}
 }
 
+//! Insert span into thread cache, releasing to global cache if overflow
+static void
+_memory_heap_cache_insert(heap_t* heap, span_t* span, size_t page_count) {
+#if MAX_SPAN_CACHE_DIVISOR == 0
+	(void)sizeof(heap);
+	_memory_global_cache_insert(span, 1, page_count);
+#else
+	size_t span_class_idx = _span_class_from_page_count(page_count);
+	span_t** cache = &heap->span_cache[span_class_idx];
+	span->next_span = *cache;
+	if (*cache)
+		span->data.list_size = (*cache)->data.list_size + 1;
+	else
+		span->data.list_size = 1;
+	*cache = span;
+#if MAX_SPAN_CACHE_DIVISOR > 1
+	//Check if cache exceeds limit
+	if (span->data.list_size >= (MIN_SPAN_CACHE_RELEASE + MIN_SPAN_CACHE_SIZE)) {
+		size_t cache_limit = heap->span_counter[span_class_idx].max_allocations / MAX_SPAN_CACHE_DIVISOR;
+		if (span->data.list_size > cache_limit) {
+			//Release to global cache
+			count_t list_size = 1;
+			span_t* next = span->next_span;
+			span_t* last = span;
+			while (list_size < MIN_SPAN_CACHE_RELEASE) {
+				last = next;
+				next = next->next_span;
+				++list_size;
+			}
+			next->data.list_size = span->data.list_size - list_size;
+			last->next_span = 0; //Terminate list
+			*cache = next;
+			_memory_global_cache_insert(span, list_size, page_count);
+#if ENABLE_STATISTICS
+			heap->thread_to_global += list_size * page_count * PAGE_SIZE;
+#endif
+		}
+	}
+#endif
+#endif
+}
+
 //! Deallocate the given small/medium memory block from the given heap
 static void
 _memory_deallocate_to_heap(heap_t* heap, span_t* span, void* p) {
@@ -821,130 +998,94 @@ _memory_deallocate_to_heap(heap_t* heap, span_t* span, void* p) {
 	heap->requested -= *(size_t*)pointer_offset(p, size_class->size - sizeof(size_t));
 #endif
 
-	//Check if the span will become completely free and that it is not the currently active span
-	//If it is active, keep it in the 
-	if (!is_active && (block_data->free_count == ((count_t)size_class->block_count - 1))) {
-		//Remove from free list (present if we had a previous free block)
-		if (block_data->free_count > 0)
+	//Check if the span will become completely free
+	if (block_data->free_count == ((count_t)size_class->block_count - 1)) {
+		//Track counters
+		size_t span_class_idx = _span_class_from_page_count(size_class->page_count);
+		--heap->span_counter[span_class_idx].current_allocations;
+
+		//If it was active, reset counter. Otherwise, if not active, remove from
+		//partial free list if we had a previous free block (guard for classes with only 1 block)
+		if (is_active)
+			block_data->free_count = 0;
+		else if (block_data->free_count > 0)
 			_memory_list_remove(&heap->size_cache[class_idx], span);
 
-#if defined(THREAD_SPAN_CACHE_LIMIT)
-		//Check if we have a cache limit
-		size_t active_heaps = (size_t)atomic_load32(&_memory_active_heaps);
-		const size_t cache_limit = THREAD_SPAN_CACHE_LIMIT(size_class->page_count, active_heaps);
-		if (!cache_limit) {
-			_memory_global_cache_insert(span, 1, size_class->page_count);
-#if ENABLE_STATISTICS
-			heap->thread_to_global += size_class->page_count * PAGE_SIZE;
-#endif
-			return;
-		}
-#endif
 		//Add to span cache
-		span_t** cache = &heap->span_cache[size_class->page_count-1];
-		span->next_span = *cache;
-		if (*cache)
-			span->data.list_size = (*cache)->data.list_size + 1;
-		else
-			span->data.list_size = 1;
-		*cache = span;
-#if defined(THREAD_SPAN_CACHE_LIMIT)
-		//Check if cache exceeds limit
-		if (span->data.list_size >= cache_limit) {
-			//Release to global cache
-			count_t list_size = 1;
-			span_t* next = span->next_span;
-			span_t* last = span;
-			while (list_size < MAX_SPAN_CACHE_TRANSFER) {
-				last = next;
-				next = next->next_span;
-				++list_size;
-			}
-			*cache = next;
-			last->next_span = 0; //Terminate list
-			_memory_global_cache_insert(span, list_size, size_class->page_count);
-#if ENABLE_STATISTICS
-			heap->thread_to_global += list_size * size_class->page_count * PAGE_SIZE;
-#endif
-		}
-#endif
+		_memory_heap_cache_insert(heap, span, size_class->page_count);
+		return;
 	}
-	else {
-		//Span is active or not completely free
-		if (block_data->free_count == 0) {
-			//First free block for this span (previously fully allocated), add to free list
-			_memory_list_add(&heap->size_cache[class_idx], span);
-			block_data->first_autolink = (uint16_t)size_class->block_count;
-		}
-		++block_data->free_count;
-		if (block_data->free_count < size_class->block_count) {
-			//Span is not completely free, add block to the linked list of free blocks
-			uint32_t* block = p;
-			*block = block_data->free_list;
-			count_t block_offset = (count_t)pointer_diff(block, span) - SPAN_HEADER_SIZE;
-			count_t block_idx = block_offset / (count_t)size_class->size;
-			block_data->free_list = (uint16_t)block_idx;
-		}
-		else {
-			//Span is completely free (and active, in order to get here),
-			//reset block order to sequential auto linked order
-			block_data->free_list = 0;
-			block_data->first_autolink = 0;
-		}
+
+	//Check if first free block for this span (previously fully allocated)
+	if (block_data->free_count == 0) {
+		//add to free list and disable autolink
+		_memory_list_add(&heap->size_cache[class_idx], span);
+		block_data->first_autolink = (uint16_t)size_class->block_count;
 	}
+	++block_data->free_count;
+	//Span is not yet completely free, so add block to the linked list of free blocks
+	uint32_t* block = p;
+	*block = block_data->free_list;
+	count_t block_offset = (count_t)pointer_diff(block, span) - SPAN_HEADER_SIZE;
+	count_t block_idx = block_offset / (count_t)size_class->size;
+	block_data->free_list = (uint16_t)block_idx;
 }
 
 //! Deallocate the given large memory block from the given heap
 static void
 _memory_deallocate_large_to_heap(heap_t* heap, span_t* span) {
-#if defined(THREAD_LARGE_CACHE_LIMIT)
-	//Check if we have a cache limit
-	const size_t cache_limit = THREAD_LARGE_CACHE_LIMIT(span->data.span_count);
-	if (!cache_limit) {
-#if ENABLE_STATISTICS
-		heap->thread_to_global += span->data.span_count * SPAN_MAX_SIZE;
-#endif
-		_memory_global_cache_large_insert(span, 1, span->data.span_count);
+	//Check if aliased with 64KiB small/medium spans
+	if (span->size_class == SIZE_CLASS_COUNT) {
+		//Track counters
+		size_t span_class_idx = _span_class_from_page_count(SPAN_MAX_PAGE_COUNT);
+		--heap->span_counter[span_class_idx].current_allocations;
+		//Add to span cache
+		_memory_heap_cache_insert(heap, span, SPAN_MAX_PAGE_COUNT);
 		return;
 	}
-#endif
+
+	//Decrease counter
+	size_t idx = span->size_class - SIZE_CLASS_COUNT;
+	span_counter_t* counter = heap->large_counter + idx;
+	--counter->current_allocations;
+
+#if MAX_SPAN_CACHE_DIVISOR == 0
+	_memory_global_cache_large_insert(span, 1, idx + 1);
+#else
 	//Insert into cache list
-	size_t idx = span->data.span_count - 1;
-	span_t* head = heap->large_cache[idx];
-	span->next_span = head;
-	//Use prev_span pointer for quick skip access to next head element after release
-	if (head) {
-		span->data.list_size = head->data.list_size + 1;
-		span->prev_span = head->prev_span; //Propagate skip span pointer
-	}
-	else {
+	span_t** cache = heap->large_cache + idx;
+	span->next_span = *cache;
+	if (*cache)
+		span->data.list_size = (*cache)->data.list_size + 1;
+	else
 		span->data.list_size = 1;
-	}
-#if defined(THREAD_LARGE_CACHE_LIMIT)
+	*cache = span;
+#if MAX_SPAN_CACHE_DIVISOR > 1
 	//Check if cache exceeds limit
-	if (span->data.list_size >= cache_limit) {
-		if (cache_limit > 2) {
-			heap->large_cache[idx] = span->prev_span->next_span;
-			span->prev_span->next_span = 0; //Terminate list
-			size_t num_spans = span->data.list_size - heap->large_cache[idx]->data.list_size;
-			_memory_global_cache_large_insert(span, num_spans, idx + 1);
+	if (span->data.list_size >= (MIN_SPAN_CACHE_RELEASE + MIN_SPAN_CACHE_SIZE)) {
+		size_t cache_limit = counter->max_allocations / MAX_SPAN_CACHE_DIVISOR;
+		if (span->data.list_size > cache_limit) {
+			//Release to global cache
+			count_t list_size = 1;
+			span_t* next = span->next_span;
+			span_t* last = span;
+			while (list_size < MIN_SPAN_CACHE_RELEASE) {
+				last = next;
+				next = next->next_span;
+				++list_size;
+			}
+			assert(next->next_span);
+			next->data.list_size = span->data.list_size - list_size;
+			last->next_span = 0; //Terminate list
+			*cache = next;
+			_memory_global_cache_large_insert(span, list_size, idx + 1);
 #if ENABLE_STATISTICS
-			heap->thread_to_global += num_spans * (idx + 1) * SPAN_MAX_SIZE;
+			heap->thread_to_global += list_size * (idx + 1) * SPAN_MAX_SIZE;
 #endif
 		}
-		else {
-			_memory_global_cache_large_insert(span, 1, idx + 1);
-#if ENABLE_STATISTICS
-			heap->thread_to_global += (idx + 1) * SPAN_MAX_SIZE;
-#endif
-		}
-		return;
-	}
-	else if (span->data.list_size == ((cache_limit / 2) + 1)) {
-		span->prev_span = span; //Set last span to release as skip span
 	}
 #endif
-	heap->large_cache[idx] = span;
+#endif
 }
 
 //! Process pending deferred cross-thread deallocations
@@ -970,6 +1111,7 @@ _memory_deallocate_deferred(heap_t* heap, size_t size_class) {
 		}
 		else {
 			//Large block
+			got_class |= ((span->size_class >= size_class) && (span->size_class <= (size_class + 2)));
 			_memory_deallocate_large_to_heap(heap, span);
 		}
 		//Loop until all pending operations in list are processed
@@ -1060,7 +1202,7 @@ _memory_reallocate(void* p, size_t size, size_t oldsize) {
 				size_t num_spans = total_size / SPAN_MAX_SIZE;
 				if (total_size % SPAN_MAX_SIZE)
 					++num_spans;
-				size_t current_spans = span->data.span_count;
+				size_t current_spans = (span->size_class - SIZE_CLASS_COUNT) + 1;
 				if ((current_spans >= num_spans) && (num_spans >= (current_spans / 2)))
 					return p; //Still fits and less than half of memory would be freed
 				if (!oldsize)
@@ -1106,7 +1248,7 @@ _memory_usable_size(void* p) {
 		}
 
 		//Large block
-		size_t current_spans = span->data.span_count;
+		size_t current_spans = (span->size_class - SIZE_CLASS_COUNT) + 1;
 		return (current_spans * (size_t)SPAN_MAX_SIZE) - SPAN_HEADER_SIZE;
 	}
 
@@ -1120,15 +1262,14 @@ static void
 _memory_adjust_size_class(size_t iclass) {
 	//Calculate how many pages are needed for 255 blocks
 	size_t block_size = _memory_size_class[iclass].size;
-	size_t header_size = SPAN_HEADER_SIZE;
 	size_t page_count = (block_size * 255) / PAGE_SIZE;
 	//Cap to 16 pages (64KiB span granularity)
 	page_count = (page_count == 0) ? 1 : ((page_count > 16) ? 16 : page_count);
-	//Merge page counts to an even number of pages
-	page_count = ((page_count + 1) / 2) * 2;
+	//Merge page counts to span size class granularity
+	page_count = ((page_count + (SPAN_CLASS_GRANULARITY - 1)) / SPAN_CLASS_GRANULARITY) * SPAN_CLASS_GRANULARITY;
 	if (page_count > 16)
 		page_count = 16;
-	size_t block_count = ((page_count * PAGE_SIZE) - header_size) / block_size;
+	size_t block_count = ((page_count * PAGE_SIZE) - SPAN_HEADER_SIZE) / block_size;
 	//Store the final configuration
 	_memory_size_class[iclass].page_count = (uint16_t)page_count;
 	_memory_size_class[iclass].block_count = (uint16_t)block_count;
@@ -1211,7 +1352,7 @@ rpmalloc_finalize(void) {
 			_memory_deallocate_deferred(heap, 0);
 
 			for (size_t iclass = 0; iclass < SPAN_CLASS_COUNT; ++iclass) {
-				const size_t page_count = iclass + 1;
+				const size_t page_count = (iclass + 1) * SPAN_CLASS_GRANULARITY;
 				span_t* span = heap->span_cache[iclass];
 				unsigned int span_count = span ? span->data.list_size : 0;
 				for (unsigned int ispan = 0; ispan < span_count; ++ispan) {
@@ -1250,7 +1391,7 @@ rpmalloc_finalize(void) {
 			unsigned int span_count = span->data.list_size;
 			for (unsigned int ispan = 0; ispan < span_count; ++ispan) {
 				span_t* next_span = span->next_span;
-				_memory_unmap(span, iclass+1);
+				_memory_unmap(span, (iclass + 1) * SPAN_CLASS_GRANULARITY);
 				span = next_span;
 			}
 			span = skip_span;
@@ -1307,14 +1448,14 @@ rpmalloc_thread_finalize(void) {
 
 	//Release thread cache spans back to global cache
 	for (size_t iclass = 0; iclass < SPAN_CLASS_COUNT; ++iclass) {
-		const size_t page_count = iclass + 1;
+		const size_t page_count = (iclass + 1) * SPAN_CLASS_GRANULARITY;
 		span_t* span = heap->span_cache[iclass];
 		while (span) {
-			if (span->data.list_size > MAX_SPAN_CACHE_TRANSFER) {
+			if (span->data.list_size > MIN_SPAN_CACHE_RELEASE) {
 				count_t list_size = 1;
 				span_t* next = span->next_span;
 				span_t* last = span;
-				while (list_size < MAX_SPAN_CACHE_TRANSFER) {
+				while (list_size < MIN_SPAN_CACHE_RELEASE) {
 					last = next;
 					next = next->next_span;
 					++list_size;
@@ -1334,28 +1475,39 @@ rpmalloc_thread_finalize(void) {
 
 	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
 		const size_t span_count = iclass + 1;
-#if defined(THREAD_LARGE_CACHE_LIMIT)
-		const size_t cache_limit = THREAD_LARGE_CACHE_LIMIT(span_count);
 		span_t* span = heap->large_cache[iclass];
 		while (span) {
-			if (span->data.list_size > (cache_limit / 2)) {
-				span_t* new_head = span->prev_span->next_span;
-				span->prev_span->next_span = 0; //Terminate list
-				_memory_global_cache_large_insert(span, span->data.list_size - new_head->data.list_size, span_count);
-				span = new_head;
+			if (span->data.list_size > MIN_SPAN_CACHE_RELEASE) {
+				count_t list_size = 1;
+				span_t* next = span->next_span;
+				span_t* last = span;
+				while (list_size < MIN_SPAN_CACHE_RELEASE) {
+					last = next;
+					next = next->next_span;
+					++list_size;
+				}
+				last->next_span = 0; //Terminate list
+				next->data.list_size = span->data.list_size - list_size;
+				_memory_global_cache_large_insert(span, list_size, span_count);
+				span = next;
 			}
-			else  {
+			else {
 				_memory_global_cache_large_insert(span, span->data.list_size, span_count);
 				span = 0;
 			}
 		}
-#else
-		span_t* span = heap->large_cache[iclass];
-		if (span)
-			_memory_global_cache_large_insert(span, span->data.list_size, span_count);
-#endif
 		heap->large_cache[iclass] = 0;
 	}
+
+	//Reset allocation counters
+	memset(heap->span_counter, 0, sizeof(heap->span_counter));
+	memset(heap->large_counter, 0, sizeof(heap->large_counter));
+#if ENABLE_STATISTICS
+	heap->requested = 0;
+	heap->allocated = 0;
+	heap->thread_to_global = 0;
+	heap->global_to_thread = 0;
+#endif
 
 	//Orphan the heap
 	heap_t* last_heap;
@@ -1573,7 +1725,7 @@ rpmalloc_thread_statistics(rpmalloc_thread_statistics_t* stats) {
 
 	for (size_t isize = 0; isize < SPAN_CLASS_COUNT; ++isize) {
 		if (heap->span_cache[isize])
-			stats->spancache = (size_t)heap->span_cache[isize]->data.list_size * (isize + 1) * PAGE_SIZE;
+			stats->spancache = (size_t)heap->span_cache[isize]->data.list_size * (isize + 1) * SPAN_CLASS_GRANULARITY * PAGE_SIZE;
 	}
 }
 
@@ -1585,14 +1737,14 @@ rpmalloc_global_statistics(rpmalloc_global_statistics_t* stats) {
 	stats->mapped_total = (size_t)atomic_load32(&_mapped_total) * PAGE_SIZE;
 	stats->unmapped_total = (size_t)atomic_load32(&_unmapped_total) * PAGE_SIZE;
 #endif
-	for (size_t page_count = 0; page_count < SPAN_CLASS_COUNT; ++page_count) {
-		void* global_span_ptr = atomic_load_ptr(&_memory_span_cache[page_count]);
+	for (size_t iclass = 0; iclass < SPAN_CLASS_COUNT; ++iclass) {
+		void* global_span_ptr = atomic_load_ptr(&_memory_span_cache[iclass]);
 		while (global_span_ptr == SPAN_LIST_LOCK_TOKEN) {
 			thread_yield();
-			global_span_ptr = atomic_load_ptr(&_memory_span_cache[page_count]);
+			global_span_ptr = atomic_load_ptr(&_memory_span_cache[iclass]);
 		}
 		uintptr_t global_span_count = (uintptr_t)global_span_ptr & ~SPAN_MASK;
-		size_t list_bytes = global_span_count * (page_count + 1) * PAGE_SIZE;
+		size_t list_bytes = global_span_count * (iclass + 1) * SPAN_CLASS_GRANULARITY * PAGE_SIZE;
 		stats->cached += list_bytes;
 	}
 	for (size_t iclass = 0; iclass < LARGE_CLASS_COUNT; ++iclass) {
