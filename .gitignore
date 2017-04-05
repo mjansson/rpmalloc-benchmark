@@ -232,3 +232,7 @@ codecovreport.json
 #Benchmark output
 benchmark*.txt
 
+benchmark/gperftools/benchmark/.deps
+benchmark/gperftools/m4
+*.Plo
+*.Po
