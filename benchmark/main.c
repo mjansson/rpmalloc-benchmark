@@ -730,6 +730,7 @@ int main(int argc, char** argv) {
 	fflush(stdout);
 
 	size_t memory_usage = 0;
+	size_t cur_memory_usage = 0;
 	size_t sample_allocated = 0;
 	size_t cur_allocated = 0;
 	uint64_t mops = 0;
@@ -777,9 +778,10 @@ int main(int argc, char** argv) {
 			size_t thread_allocated = (size_t)atomic_load32(&arg[ithread].allocated);
 			cur_allocated += thread_allocated;
 		}
-		if (cur_allocated > sample_allocated) {
+		cur_memory_usage = get_process_memory_usage();
+		if ((cur_allocated > sample_allocated) || (cur_memory_usage > memory_usage)) {
 			sample_allocated = cur_allocated;
-			memory_usage = get_process_memory_usage();
+			memory_usage = cur_memory_usage;
 		}
 
 		atomic_store32(&benchmark_threads_sync, 0);
@@ -798,9 +800,10 @@ int main(int argc, char** argv) {
 			size_t thread_allocated = (size_t)atomic_load32(&arg[ithread].allocated);
 			cur_allocated += thread_allocated;
 		}
-		if (cur_allocated > sample_allocated) {
+		cur_memory_usage = get_process_memory_usage();
+		if ((cur_allocated > sample_allocated) || (cur_memory_usage > memory_usage)) {
 			sample_allocated = cur_allocated;
-			memory_usage = get_process_memory_usage();
+			memory_usage = cur_memory_usage;
 		}
 
 		atomic_store32(&benchmark_threads_sync, 0);
