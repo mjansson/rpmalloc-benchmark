@@ -2,7 +2,7 @@
 
 os="linux"
 
-for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc; do
+for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 0 2 20000 50000 5000 16 1000
@@ -17,7 +17,7 @@ for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt ned
 	$executable 10 0 0 2 20000 50000 5000 16 1000
 done
 
-for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc; do
+for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 1 2 20000 50000 5000 16 8000
@@ -32,7 +32,7 @@ for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt ned
 	$executable 10 0 1 2 20000 50000 5000 16 8000
 done
 
-for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc; do
+for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 1 2 20000 50000 5000 16 16000
@@ -47,7 +47,7 @@ for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt ned
 	$executable 10 0 1 2 20000 50000 5000 16 16000
 done
 
-for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc; do
+for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 2 2 20000 30000 3000 128 64000
@@ -62,7 +62,7 @@ for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt ned
 	$executable 10 0 2 2 20000 30000 3000 128 64000
 done
 
-for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc; do
+for name in rpmalloc jemalloc lockfree-malloc tcmalloc ptmalloc3 scalloc crt nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 2 2 20000 20000 2000 512 160000

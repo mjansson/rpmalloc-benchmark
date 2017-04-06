@@ -126,11 +126,11 @@ bmallocincludepaths = [
 ]
 bmallocsources = [
 	'Allocator.cpp', 'Cache.cpp', 'Deallocator.cpp', 'DebugHeap.cpp', 'Environment.cpp', 'Heap.cpp',
-	'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'ObjectType.cpp', 'StaticMutex.cpp', 'VMHeap.cpp',
-	'Zone.cpp'
+	'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'ObjectType.cpp', 'StaticMutex.cpp', 'VMHeap.cpp'
 ]
-bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
 if target.is_macosx() or target.is_ios():
-	bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, externalsources = True)
-	bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
-	generator.bin(module = 'bmalloc', sources = ['benchmark.c'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	bmallocsources += ['Zone.cpp']
+bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
+bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, externalsources = True)
+bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
+generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'}, externalsources = True)
