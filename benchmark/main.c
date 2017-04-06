@@ -253,6 +253,9 @@ static size_t primes[] = {
 #include <sys/resource.h>
 #endif
 
+int
+benchmark_run(int argc, char** argv);
+
 static size_t
 get_process_memory_usage(void) {
 #if defined(_WIN32)
@@ -597,7 +600,8 @@ benchmark_worker(void* argptr) {
 	thread_exit(0);
 }
 
-int main(int argc, char** argv) {
+int
+benchmark_run(int argc, char** argv) {
 	if (timer_initialize() < 0)
 		return -1;
 	if (benchmark_initialize() < 0)
@@ -696,21 +700,9 @@ int main(int argc, char** argv) {
 
 	benchmark_arg* arg;
 	uintptr_t* thread_handle;
-	FILE* fd;
 	
 	arg = benchmark_malloc(0, sizeof(benchmark_arg) * thread_count);
 	thread_handle = benchmark_malloc(0, sizeof(thread_handle) * thread_count);
-
-	char filebuf[64];
-	if (mode == 0)
-		sprintf(filebuf, "benchmark-random-%u-%u-%u-%s.txt",
-		        (unsigned int)thread_count, (unsigned int)min_size,
-		        (unsigned int)max_size, benchmark_name());
-	else
-		sprintf(filebuf, "benchmark-fixed-%u-%u-%s.txt",
-		        (unsigned int)thread_count, (unsigned int)min_size,
-		        benchmark_name());
-	fd = fopen(filebuf, "w+b");
 
 	benchmark_start = 0;
 
@@ -835,6 +827,18 @@ int main(int argc, char** argv) {
 	benchmark_free(thread_handle);
 	benchmark_free(arg);
 
+	FILE* fd;
+	char filebuf[64];
+	if (mode == 0)
+		sprintf(filebuf, "benchmark-random-%u-%u-%u-%s.txt",
+				(unsigned int)thread_count, (unsigned int)min_size,
+				(unsigned int)max_size, benchmark_name());
+	else
+		sprintf(filebuf, "benchmark-fixed-%u-%u-%s.txt",
+				(unsigned int)thread_count, (unsigned int)min_size,
+				benchmark_name());
+	fd = fopen(filebuf, "w+b");
+
 	size_t peak_allocated = get_process_peak_memory_usage();
 	double time_elapsed = timer_ticks_to_seconds(ticks);
 	double average_mops = (double)mops / time_elapsed;
@@ -844,8 +848,10 @@ int main(int argc, char** argv) {
 		                peak_allocated,
 	                    sample_allocated,
 		                memory_usage);
-	fwrite(linebuf, (len > 0) ? (size_t)len : 0, 1, fd);
-	fflush(fd);
+	if (fd) {
+		fwrite(linebuf, (len > 0) ? (size_t)len : 0, 1, fd);
+		fflush(fd);
+	}
 
 	printf("%u memory ops/CPU second (%uMiB peak, %uMiB -> %uMiB bytes sample, %.0f%% overhead)\n",
 		    (unsigned int)average_mops, (unsigned int)(peak_allocated / (1024 * 1024)),
@@ -853,10 +859,27 @@ int main(int argc, char** argv) {
 	        100.0 * ((double)memory_usage - (double)sample_allocated) / (double)sample_allocated);
 	fflush(stdout);
 
-	fclose(fd);
+	if (fd)
+		fclose(fd);
 
 	if (benchmark_finalize() < 0)
 		return -4;
 
 	return 0;
 }
+
+#if ( defined( __APPLE__ ) && __APPLE__ )
+#  include <TargetConditionals.h>
+#  if defined( __IPHONE__ ) || ( defined( TARGET_OS_IPHONE ) && TARGET_OS_IPHONE ) || ( defined( TARGET_IPHONE_SIMULATOR ) && TARGET_IPHONE_SIMULATOR )
+#    define NO_MAIN 1
+#  endif
+#endif
+
+#if !defined(NO_MAIN)
+
+int
+main(int argc, char** argv) {
+	return benchmark_run(argc, argv);
+}
+
+#endif
