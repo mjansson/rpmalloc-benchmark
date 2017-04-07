@@ -134,3 +134,17 @@ bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
 bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, externalsources = True)
 bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
 generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'}, externalsources = True)
+
+#Requires -mrtm and CPU tsx support for full performance?
+supermallocincludepaths = [
+	os.path.join('benchmark', 'supermalloc', 'src')
+]
+supermallocsources = [
+	'bassert.cc', 'cache.cc', 'footprint.cc', 'futex_mutex.cc', 'has_tsx.cc', 'huge_malloc.cc',
+	'large_malloc.cc', 'makechunk.cc', 'malloc.cc', 'rng.cc', 'small_malloc.cc', 'stats.cc',
+	'generated_constants.cc'
+]
+supermallocsources = [os.path.join('src', path) for path in supermallocsources]
+supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, externalsources = True, variables = {'defines': ['USE_PTHREAD_MUTEXES']})
+supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
+generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'}, externalsources = True)

@@ -46,21 +46,14 @@ benchmark_thread_finalize(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-#ifdef __APPLE__
-	if (alignment) {
-		void* ptr = 0;
-		posix_memalign(&ptr, alignment, size);
-		return ptr;
-	}
-	return malloc(size);
-#else
-	return alignment ? memalign(alignment, size) : malloc(size);
-#endif
+	//TODO: scalloc seems to segfault if using memalign, so ignore alignment for now
+	(void)sizeof(alignment);
+	return scalloc_malloc(size);//alignment ? scalloc_memalign(alignment, size) : scalloc_malloc(size);
 }
 
 void
 benchmark_free(void* ptr) {
-	free(ptr);
+	scalloc_free(ptr);
 }
 
 const char*
