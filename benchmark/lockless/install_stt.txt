@@ -1,0 +1,33 @@
+To use the static version of the Lockless memory allocator, you may want to first copy it to somewhere where your linker will find it.  Do this if you wish to avoid adding "-L" directory search options to your linker command line.
+
+First determine the correct location for the library in your filesystem.  This location depends on which linux distribution you use, and whether or not you use a 64bit machine.
+
+The correct location is:
+
+Debian or Ubuntu based systems:
+32bit: /usr/lib
+64bit: /usr/lib
+32bit library in a 64bit multilib install: /usr/lib32
+
+Redhat, Suse or Gentoo based systems:
+32bit: /usr/lib
+64bit: /usr/lib64
+32bit library in a 64bit multilib install: /usr/lib32 or /usr/lib depending on if /usr/lib is a symlink to /usr/lib64 or not.
+
+
+Become root
+> su
+"root password"
+
+Copy the library to the correct location (here we assume /usr/lib)
+>cp libllalloc.a /usr/lib
+
+Done - all installed
+> exit
+
+If you do this, then linking with "-lllalloc" will include the static library in your executable.  Note, if you have also purchased and installed the dynamic library, then you will also need to include the "-static" compile option to select static linking rather than the dynamic library.
+
+
+If you do not wish to install the library in the standard location, then you can compile your programs by adding "/some/path/to/library/libllalloc.a" to the end of your link command line.  This method allows you to install the library where ever you wish.
+
+Note that it is probably not wise to let root run programs linked with the Lockless memory allocator.  The allocator is designed for speed, not security.

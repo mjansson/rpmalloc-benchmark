@@ -148,3 +148,6 @@ supermallocsources = [os.path.join('src', path) for path in supermallocsources]
 supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, externalsources = True, variables = {'defines': ['USE_PTHREAD_MUTEXES']})
 supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
 generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'}, externalsources = True)
+
+lockless_depend_libs = ['benchmark', 'test']
+generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = {'defines': ['USE_PREFIX']}, externalsources = True)

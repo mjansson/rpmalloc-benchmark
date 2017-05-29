@@ -140,7 +140,7 @@ class GCCToolchain(toolchain.Toolchain):
 
   def build_default_toolchain(self):
     self.cxxflags = self.cflags + ['-std=c++11', '-D_GNU_SOURCE=1']
-    self.cflags += ['-std=c11', '-D_GNU_SOURCE=1']
+    self.cflags += ['-std=gnu11', '-D_GNU_SOURCE=1']
     if self.target.is_macosx() or self.target.is_ios():
       self.cxxflags += ['-stdlib=libc++']
 

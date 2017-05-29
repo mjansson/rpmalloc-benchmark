@@ -1,0 +1,24 @@
+LIBRARY llalloc
+EXPORTS
+	llallocfree
+	cfree
+	llallocmalloc
+	llalloccalloc
+	llallocrealloc
+	memalign
+	posix_memalign
+	valloc
+	pvalloc
+	llalloc_msize
+	mallinfo
+	malloc_trim
+	mallopt
+	independent_calloc
+	independent_comalloc
+	llalloc_expand
+	llalloc_free_nolock
+	llalloc_realloc_nolock
+	llalloc_calloc_nolock
+	llalloc_msize_nolock
+	llalloc_use
+	lldebug_hook

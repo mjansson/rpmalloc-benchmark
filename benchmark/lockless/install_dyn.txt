@@ -1,0 +1,62 @@
+To install the Lockless memory allocator, you must first copy it to the correct location in your file system.
+
+This location depends on which linux distribution you use, and whether or not you use a 64bit machine.
+
+The correct location is:
+
+Debian or Ubuntu based systems:
+32bit: /usr/lib
+64bit: /usr/lib
+32bit library in a 64bit multilib install: /usr/lib32
+
+Redhat, Suse or Gentoo based systems:
+32bit: /usr/lib
+64bit: /usr/lib64
+32bit library in a 64bit multilib install: /usr/lib32 or /usr/lib depending on if /usr/lib is a symlink to /usr/lib64 or not.
+
+
+Become root
+> su
+"root password"
+
+Copy the library to the correct location (here we assume /usr/lib)
+> cp libllalloc.so.1.3 /usr/lib
+
+Go to that location (here we assume /usr/lib)
+> cd /usr/lib
+
+Make the two symlinks to properly install the library
+> ln -sf libllalloc.so.1.3 libllalloc.so
+> ln -sf libllalloc.so.1.3 libllalloc.so.1
+
+Regenerate your library cache for the directory you are in (assuming /usr/lib)
+> ldconfig -n /usr/lib
+
+Done - all installed
+> exit
+
+
+
+
+
+Once installed, the Lockless memory allocator can be used in several ways.
+1) Firstly, you can link it to programs you compile.  Just add "-lllalloc" to the link command line to add the library to your program.  You can check that this has worked by running ldd on the compiled program.
+> ldd my_program
+
+Make sure libllalloc.so is listed as a library in the output from ldd.  If not, check your library search paths in /etc/ld.so.conf to make sure the directory you installed the library in is listed.  Another possible error is that you didn't put "-lllalloc" far enough along in the link command line.  The linker will only add a library to an executable if it will satisfy dependencies for currently unseen external symbols as it scans the command line from left to right.  If the object files that use i.e. malloc() or free() are placed after -lllalloc on the link command line, then the linker won't know that the library is needed.  The easiest way to fix this is to put "-lllalloc" last.
+
+2) If you wish to have a program use the library, and do not wish to recompile it, you can use the LD_PRELOAD feature of glibc.  Again assuming the library is installed in /usr/lib
+
+If your shell is bash or ksh you can use:
+> export LD_PRELOAD=/usr/lib/libllalloc.so
+
+If your shell is csh or tcsh you can use:
+> setenv LD_PRELOAD /usr/lib/libllalloc.so
+
+This will cause all programs launched from that shell to use the Lockless memory allocator instead of the default one.
+
+3) If you want all your programs to run using the memory allocator add the above lines to your shell's init file.
+
+i.e. If your shell is bash, edit your .bashrc in your home directory, and add "export LD_PRELOAD=/usr/lib/libllalloc.so" to it.
+
+Note that it is probably not wise to let root run programs linked with the Lockless memory allocator.  The allocator is designed for speed, not security.

@@ -9,7 +9,13 @@
  *
  */
 
+#pragma once
+
 #include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #if defined(__clang__) || defined(__GNUC__)
 # define RPMALLOC_ATTRIBUTE __attribute__((__malloc__))
@@ -21,6 +27,9 @@
 # define RPMALLOC_ATTRIBUTE
 # define RPMALLOC_CALL
 #endif
+
+//! Flag to rpaligned_realloc to not preserve content in reallocation
+#define RPMALLOC_NO_PRESERVE    1
 
 typedef struct rpmalloc_global_statistics_t {
 	//! Current amount of virtual memory mapped (only if ENABLE_STATISTICS=1)
@@ -69,6 +78,9 @@ rpmalloc_thread_finalize(void);
 extern void
 rpmalloc_thread_collect(void);
 
+extern int
+rpmalloc_is_thread_initialized(void);
+
 extern void
 rpmalloc_thread_statistics(rpmalloc_thread_statistics_t* stats);
 
@@ -87,6 +99,9 @@ rpcalloc(size_t num, size_t size) RPMALLOC_ATTRIBUTE;
 extern void*
 rprealloc(void* ptr, size_t size);
 
+extern void*
+rpaligned_realloc(void* ptr, size_t alignment, size_t size, size_t oldsize, unsigned int flags);
+
 extern RPMALLOC_CALL void*
 rpaligned_alloc(size_t alignment, size_t size) RPMALLOC_ATTRIBUTE;
 
@@ -98,3 +113,7 @@ rpposix_memalign(void **memptr, size_t alignment, size_t size);
 
 extern size_t
 rpmalloc_usable_size(void* ptr);
+
+#ifdef __cplusplus
+}
+#endif
