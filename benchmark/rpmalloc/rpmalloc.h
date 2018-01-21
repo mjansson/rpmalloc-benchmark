@@ -19,13 +19,16 @@ extern "C" {
 
 #if defined(__clang__) || defined(__GNUC__)
 # define RPMALLOC_ATTRIBUTE __attribute__((__malloc__))
-# define RPMALLOC_CALL
+# define RPMALLOC_RESTRICT
+# define RPMALLOC_CDECL
 #elif defined(_MSC_VER)
 # define RPMALLOC_ATTRIBUTE
-# define RPMALLOC_CALL __declspec(restrict)
+# define RPMALLOC_RESTRICT __declspec(restrict)
+# define RPMALLOC_CDECL __cdecl
 #else
 # define RPMALLOC_ATTRIBUTE
-# define RPMALLOC_CALL
+# define RPMALLOC_RESTRICT
+# define RPMALLOC_CDECL
 #endif
 
 //! Flag to rpaligned_realloc to not preserve content in reallocation
@@ -63,8 +66,26 @@ typedef struct rpmalloc_thread_statistics_t {
 	size_t global_to_thread;
 } rpmalloc_thread_statistics_t;
 
+typedef struct rpmalloc_config_t {
+	//! Map memory pages for the given number of bytes. The returned address MUST be
+	//  2 byte aligned, and should ideally be 64KiB aligned. If memory returned is not
+	//  64KiB aligned rpmalloc will call unmap and then another map request with size
+	//  padded by 64KiB in order to align it internally.
+	void* (*memory_map)(size_t size);
+	//! Unmap the memory pages starting at address and spanning the given number of bytes.
+	//  Address will always be an address returned by an earlier call to memory_map function.
+	void (*memory_unmap)(void* address, size_t size);
+	//! Size of memory pages. All allocation requests will be made in multiples of this page
+	//  size. If set to 0, rpmalloc will use system calls to determine the page size. The page
+	//  size MUST be a power of two in [512,16384] range (2^9 to 2^14).
+	size_t page_size;
+} rpmalloc_config_t;
+
 extern int
 rpmalloc_initialize(void);
+
+extern int
+rpmalloc_initialize_config(const rpmalloc_config_t* config);
 
 extern void
 rpmalloc_finalize(void);
@@ -87,13 +108,13 @@ rpmalloc_thread_statistics(rpmalloc_thread_statistics_t* stats);
 extern void
 rpmalloc_global_statistics(rpmalloc_global_statistics_t* stats);
 
-extern RPMALLOC_CALL void*
+extern RPMALLOC_RESTRICT void*
 rpmalloc(size_t size) RPMALLOC_ATTRIBUTE;
 
 extern void
 rpfree(void* ptr);
 
-extern RPMALLOC_CALL void*
+extern RPMALLOC_RESTRICT void*
 rpcalloc(size_t num, size_t size) RPMALLOC_ATTRIBUTE;
 
 extern void*
@@ -102,10 +123,10 @@ rprealloc(void* ptr, size_t size);
 extern void*
 rpaligned_realloc(void* ptr, size_t alignment, size_t size, size_t oldsize, unsigned int flags);
 
-extern RPMALLOC_CALL void*
+extern RPMALLOC_RESTRICT void*
 rpaligned_alloc(size_t alignment, size_t size) RPMALLOC_ATTRIBUTE;
 
-extern RPMALLOC_CALL void*
+extern RPMALLOC_RESTRICT void*
 rpmemalign(size_t alignment, size_t size) RPMALLOC_ATTRIBUTE;
 
 extern int
