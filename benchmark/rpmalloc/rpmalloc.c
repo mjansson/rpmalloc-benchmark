@@ -69,6 +69,11 @@
 #define ENABLE_PRELOAD            0
 #endif
 
+#ifndef ENABLE_GUARDS
+//! Enable overwrite/underwrite guards
+#define ENABLE_GUARDS             0
+#endif
+
 // Platform and arch specifics
 
 #ifdef _MSC_VER
@@ -113,7 +118,11 @@
 #  include <assert.h>
 #else
 #  undef  assert
-#  define assert(x)
+#  define assert(x) do {} while(0)
+#endif
+
+#if ENABLE_GUARDS
+#  define MAGIC_GUARD 0xDEADBAAD
 #endif
 
 // Atomic access abstraction
@@ -257,7 +266,7 @@ typedef uint32_t count_t;
 #if ENABLE_VALIDATE_ARGS
 //! Maximum allocation size to avoid integer overflow
 #undef  MAX_ALLOC_SIZE
-#define MAX_ALLOC_SIZE            (((size_t)-1) - _memory_page_size)
+#define MAX_ALLOC_SIZE            (((size_t)-1) - SPAN_ADDRESS_GRANULARITY)
 #endif
 
 // Data types
@@ -847,6 +856,8 @@ use_active:
 static void*
 _memory_allocate_large_from_heap(heap_t* heap, size_t size) {
 	//Calculate number of needed max sized spans (including header)
+	//Since this function is never called if size > LARGE_SIZE_LIMIT
+	//the num_spans is guaranteed to be <= LARGE_CLASS_COUNT
 	size += SPAN_HEADER_SIZE;
 	size_t num_spans = size / SPAN_MAX_SIZE;
 	if (size % SPAN_MAX_SIZE)
@@ -903,7 +914,7 @@ _memory_allocate_large_from_heap(heap_t* heap, size_t size) {
 
 use_cache:
 	//Step 1: Check if cache for this large size class (or the following, unless first class) has a span
-	while (!heap->large_cache[idx] && (idx < LARGE_CLASS_COUNT) && (idx < num_spans + 1))
+	while (!heap->large_cache[idx] && (idx < (LARGE_CLASS_COUNT - 1)) && (idx < (num_spans + 1)))
 		++idx;
 	span_t* span = heap->large_cache[idx];
 	if (span) {
@@ -1414,6 +1425,7 @@ _memory_adjust_size_class(size_t iclass) {
 //! Initialize the allocator and setup global data
 int
 rpmalloc_initialize(void) {
+	memset(&_memory_config, 0, sizeof(rpmalloc_config_t));
 	return rpmalloc_initialize_config(0);
 }
 
@@ -1439,20 +1451,19 @@ rpmalloc_initialize_config(const rpmalloc_config_t* config) {
 		_memory_page_size = (size_t)sysconf(_SC_PAGESIZE);
 #endif
 	}
-	if ((_memory_page_size < 512) || (_memory_page_size > 16384))
-		return -1;
+	if (_memory_page_size < 512)
+		_memory_page_size = 512;
+	if (_memory_page_size > 16384)
+		_memory_page_size = 16384;
 
 	_memory_page_size_shift = 0;
 	size_t page_size_bit = _memory_page_size;
-	while (!(page_size_bit & 1)) {
+	while (page_size_bit != 1) {
 		++_memory_page_size_shift;
 		page_size_bit >>= 1;
 	}
-	if (page_size_bit != 1) {
-		//Not a power of 2
-		return -1;
-	}
 
+	_memory_page_size = ((size_t)1 << _memory_page_size_shift);
 	_memory_max_page_count = (SPAN_MAX_SIZE >> _memory_page_size_shift);
 
 #if defined(__APPLE__) && ENABLE_PRELOAD
@@ -1487,6 +1498,8 @@ rpmalloc_initialize_config(const rpmalloc_config_t* config) {
 void
 rpmalloc_finalize(void) {
 	atomic_thread_fence_acquire();
+
+	rpmalloc_thread_finalize();
 
 	//Free all thread caches
 	for (size_t list_idx = 0; list_idx < HEAP_ARRAY_SIZE; ++list_idx) {
@@ -1668,7 +1681,7 @@ rpmalloc_thread_finalize(void) {
 		raw_heap = (void*)((uintptr_t)heap | (orphan_counter & 0xFFFF));
 	}
 	while (!atomic_cas_ptr(&_memory_orphan_heaps, raw_heap, last_heap));
-	
+
 	set_thread_heap(0);
 }
 
@@ -1739,11 +1752,77 @@ rpmalloc(size_t size) {
 		return 0;
 	}
 #endif
-	return _memory_allocate(size);
+#if ENABLE_GUARDS
+	size += 32;
+#endif
+	void* block = _memory_allocate(size);
+#if ENABLE_GUARDS
+	if (block) {
+		size_t block_size = _memory_usable_size(block);
+		uint32_t* deadzone = block;
+		deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+		deadzone = (uint32_t*)pointer_offset(block, block_size - 16);
+		deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+		block = pointer_offset(block, 16);
+	}
+#endif
+	return block;
 }
+
+#if ENABLE_GUARDS
+static void
+_memory_validate_integrity(void* p) {
+	if (!p)
+		return;
+	void* block_start;
+	size_t block_size = _memory_usable_size(p);
+	span_t* span = (void*)((uintptr_t)p & SPAN_MASK);
+	int32_t heap_id = atomic_load32(&span->heap_id);
+	if (heap_id) {
+		if (span->size_class < SIZE_CLASS_COUNT) {
+			void* span_blocks_start = pointer_offset(span, SPAN_HEADER_SIZE);
+			size_class_t* size_class = _memory_size_class + span->size_class;
+			count_t block_offset = (count_t)pointer_diff(p, span_blocks_start);
+			count_t block_idx = block_offset / (count_t)size_class->size;
+	 		block_start = pointer_offset(span_blocks_start, block_idx * size_class->size);
+	 	}
+	 	else {
+			block_start = pointer_offset(span, SPAN_HEADER_SIZE);
+	 	}
+  	}
+	else {
+		block_start = pointer_offset(span, SPAN_HEADER_SIZE);
+	}
+	uint32_t* deadzone = block_start;
+	//If these asserts fire, you have written to memory before the block start
+	for (int i = 0; i < 4; ++i) {
+		if (deadzone[i] == MAGIC_GUARD)
+			continue;
+		if (_memory_config.memory_overwrite)
+			_memory_config.memory_overwrite(p);
+		else
+			assert(deadzone[i] == MAGIC_GUARD && "Memory overwrite before block start");
+		return;
+	}
+	deadzone = (uint32_t*)pointer_offset(block_start, block_size - 16);
+	//If these asserts fire, you have written to memory after the block end
+	for (int i = 0; i < 4; ++i) {
+		if (deadzone[i] == MAGIC_GUARD)
+			continue;
+		if (_memory_config.memory_overwrite)
+			_memory_config.memory_overwrite(p);
+		else
+			assert(deadzone[i] == MAGIC_GUARD && "Memory overwrite after block end");
+		return;
+	}
+}
+#endif
 
 void
 rpfree(void* ptr) {
+#if ENABLE_GUARDS
+	_memory_validate_integrity(ptr);
+#endif	
 	_memory_deallocate(ptr);
 }
 
@@ -1767,9 +1846,23 @@ rpcalloc(size_t num, size_t size) {
 #else
 	total = num * size;
 #endif
-	void* ptr = _memory_allocate(total);
-	memset(ptr, 0, total);
-	return ptr;
+#if ENABLE_GUARDS
+	total += 32;
+#endif
+	void* block = _memory_allocate(total);
+#if ENABLE_GUARDS
+	if (block) {
+		size_t block_size = _memory_usable_size(block);
+		uint32_t* deadzone = block;
+		deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+		deadzone = (uint32_t*)pointer_offset(block, block_size - 16);
+		deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+		block = pointer_offset(block, 16);
+		total -= 32;
+	}
+#endif
+	memset(block, 0, total);
+	return block;
 }
 
 void*
@@ -1780,26 +1873,58 @@ rprealloc(void* ptr, size_t size) {
 		return ptr;
 	}
 #endif
-	return _memory_reallocate(ptr, size, 0, 0);
+#if ENABLE_GUARDS
+	_memory_validate_integrity(ptr);
+	size += 32;
+#endif
+	void* block = _memory_reallocate(ptr, size, 0, 0);
+#if ENABLE_GUARDS
+	if (block) {
+		size_t block_size = _memory_usable_size(block);
+		uint32_t* deadzone = block;
+		deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+		deadzone = (uint32_t*)pointer_offset(block, block_size - 16);
+		deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+		block = pointer_offset(block, 16);
+	}
+#endif
+	return block;
 }
 
 void*
 rpaligned_realloc(void* ptr, size_t alignment, size_t size, size_t oldsize,
                   unsigned int flags) {
 #if ENABLE_VALIDATE_ARGS
-	if (size + alignment < size) {
+	if ((size + alignment < size) || (alignment > PAGE_SIZE)) {
 		errno = EINVAL;
 		return 0;
 	}
 #endif
+	void* block;
 	if (alignment > 16) {
-		void* block = rpaligned_alloc(alignment, size);
+		block = rpaligned_alloc(alignment, size);
 		if (!(flags & RPMALLOC_NO_PRESERVE))
 			memcpy(block, ptr, oldsize < size ? oldsize : size);
 		rpfree(ptr);
-		return block;
 	}
-	return _memory_reallocate(ptr, size, oldsize, flags);
+	else {
+#if ENABLE_GUARDS
+		_memory_validate_integrity(ptr);
+		size += 32;
+#endif
+		block = _memory_reallocate(ptr, size, oldsize, flags);
+#if ENABLE_GUARDS
+		if (block) {
+			size_t block_size = _memory_usable_size(block);
+			uint32_t* deadzone = block;
+			deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+			deadzone = (uint32_t*)pointer_offset(block, block_size - 16);
+			deadzone[0] = deadzone[1] = deadzone[2] = deadzone[3] = MAGIC_GUARD;
+			block = pointer_offset(block, 16);
+		}
+#endif
+	}
+	return block;
 }
 
 RPMALLOC_RESTRICT void*
@@ -1808,7 +1933,7 @@ rpaligned_alloc(size_t alignment, size_t size) {
 		return rpmalloc(size);
 
 #if ENABLE_VALIDATE_ARGS
-	if (size + alignment < size) {
+	if ((size + alignment < size) || (alignment > PAGE_SIZE)) {
 		errno = EINVAL;
 		return 0;
 	}
@@ -1836,7 +1961,14 @@ rpposix_memalign(void **memptr, size_t alignment, size_t size) {
 
 size_t
 rpmalloc_usable_size(void* ptr) {
-	return ptr ? _memory_usable_size(ptr) : 0;
+	size_t size = 0;
+	if (ptr) {
+		size = _memory_usable_size(ptr);
+#if ENABLE_GUARDS
+		size -= 32;
+#endif
+	}
+	return size;
 }
 
 void
