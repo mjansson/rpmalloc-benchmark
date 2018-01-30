@@ -165,6 +165,8 @@ if not target.is_android():
 	supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
 	generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
 
-#lockless_depend_libs = ['benchmark', 'test']
-#if not target.is_android():
-#	generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = {'defines': ['USE_PREFIX']})
+if toolchain.name() == "gcc":
+	lockless_depend_libs = ['benchmark', 'test']
+	if target.is_linux():
+		generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = {'defines': ['USE_PREFIX']})
+

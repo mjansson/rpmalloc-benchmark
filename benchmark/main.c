@@ -315,11 +315,13 @@ put_cross_thread_memory(atomicptr_t* ptr, thread_pointers* pointers) {
 
 static thread_pointers*
 get_cross_thread_memory(atomicptr_t* ptr) {
+	void* prev;
 	thread_pointers* current;
 	do {
-		current = atomic_load_ptr(ptr);
-	} while (current && !atomic_cas_ptr(ptr, 0, current));
-	return (void*)((uintptr_t)current & ~(uintptr_t)0xF);
+		prev = atomic_load_ptr(ptr);
+		current = (void*)((uintptr_t)prev & ~(uintptr_t)0xF);
+	} while (current && !atomic_cas_ptr(ptr, (void*)((uintptr_t)atomic_incr32(&cross_thread_counter) & 0xF), prev));
+	return current;
 }
 
 static void

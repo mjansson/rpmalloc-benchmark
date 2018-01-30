@@ -117,6 +117,9 @@ class Toolchain(object):
     #Paths created
     self.paths_created = {}
 
+  def name():
+    return self.toolchain
+
   def initialize_subninja(self, path):
     self.subninja = path
 
