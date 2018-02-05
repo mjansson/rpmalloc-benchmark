@@ -406,11 +406,12 @@ benchmark_worker(void* argptr) {
 				}
 				size_t size = arg->min_size;
 				if (arg->mode == MODE_RANDOM)
-					size += random_size_arr[(size_index + 2) % random_size_count];
+					size = random_size_arr[(size_index + 2) % random_size_count];
 				pointers[alloc_idx] = benchmark_malloc((size < 4096) ? alignment[(size_index + iop) % 3] : 0, size);
 				//Make sure to write to each page to commit it for measuring memory usage
 				*(int32_t*)pointers[alloc_idx] = (int32_t)size;
-				for (size_t page = 1; page < size / 4096; ++page)
+				size_t num_pages = (size - 1) / 4096;
+				for (size_t page = 1; page < num_pages; ++page)
 					*((char*)(pointers[alloc_idx]) + (page * 4096)) = 1;
 				*((char*)(pointers[alloc_idx]) + (size - 1)) = 1;
 				allocated += (int32_t)size;
@@ -432,10 +433,11 @@ benchmark_worker(void* argptr) {
 				for (iop = 0; iop < alloc_op_count; ++iop) {
 					size_t size = arg->min_size;
 					if (arg->mode == MODE_RANDOM)
-						size += random_size_arr[(size_index + 2) % random_size_count];
+						size = random_size_arr[(size_index + 2) % random_size_count];
 					foreign->pointers[iop] = benchmark_malloc((size < 4096) ? alignment[(size_index + iop) % 3] : 0, size);
 					*(int32_t*)foreign->pointers[iop] = (int32_t)size;
-					for (size_t page = 1; page < size / 4096; ++page)
+					size_t num_pages = (size - 1) / 4096;
+					for (size_t page = 1; page < num_pages; ++page)
 						*((char*)(foreign->pointers[iop]) + (page * 4096)) = 1;
 					*((char*)(foreign->pointers[iop]) + (size - 1)) = 1;
 					allocated += (int32_t)size;
@@ -459,6 +461,7 @@ benchmark_worker(void* argptr) {
 					cross_index = (cross_index + 1) % arg->numthreads;
 				benchmark_arg* cross_arg = &arg->args[cross_index];
 				put_cross_thread_memory(&cross_arg->foreign, foreign);
+				foreign = 0;
 			}
 
 			if (atomic_load32(&benchmark_threads_sync) > 0)
@@ -476,10 +479,11 @@ benchmark_worker(void* argptr) {
 			if (!pointers[iptr]) {
 				size_t size = arg->min_size;
 				if (arg->mode == MODE_RANDOM)
-					size += random_size_exp[(size_index + 2) % random_size_count];
+					size = random_size_exp[(size_index + 2) % random_size_count];
 				pointers[iptr] = benchmark_malloc((size < 4096) ? alignment[size_index % 3] : 0, size);
 				*(int32_t*)pointers[iptr] = (int32_t)size;
-				for (size_t page = 1; page < size / 4096; ++page)
+				size_t num_pages = (size - 1) / 4096;
+				for (size_t page = 1; page < num_pages; ++page)
 					*((char*)(pointers[iptr]) + (page * 4096)) = 1;
 				*((char*)(pointers[iptr]) + (size - 1)) = 1;
 				allocated += (int32_t)size;
