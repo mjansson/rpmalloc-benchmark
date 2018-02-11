@@ -550,10 +550,10 @@ benchmark_worker(void* argptr) {
 		printf(".");
 		fflush(stdout);
 
-		printf(" %.2f ", timer_ticks_to_seconds(iter_ticks_elapsed));
-		if (aborted)
-			printf("(aborted) ");
-		fflush(stdout);
+		//printf(" %.2f ", timer_ticks_to_seconds(iter_ticks_elapsed));
+		//if (aborted)
+		//	printf("(aborted) ");
+		//fflush(stdout);
 		aborted = 0;
 	}
 
