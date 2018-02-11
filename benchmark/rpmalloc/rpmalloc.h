@@ -39,8 +39,6 @@ typedef struct rpmalloc_global_statistics_t {
 	size_t mapped;
 	//! Current amount of memory in global caches for small and medium sizes (<64KiB)
 	size_t cached;
-	//! Curren amount of memory in global caches for large sizes (>=64KiB)
-	size_t cached_large;
 	//! Total amount of memory mapped (only if ENABLE_STATISTICS=1)
 	size_t mapped_total;
 	//! Total amount of memory unmapped (only if ENABLE_STATISTICS=1)
@@ -73,9 +71,11 @@ typedef struct rpmalloc_config_t {
 	//  alignment to shift it into 16 bits.
 	void* (*memory_map)(size_t size, size_t* offset);
 	//! Unmap the memory pages starting at address and spanning the given number of bytes.
-	//  The address, size and offset variables will always be a value triple as used
-	//  in and returned by an earlier call to memory_map
-	void (*memory_unmap)(void* address, size_t size, size_t offset);
+	//  If release is set to 1, the unmap is for an entire span range as returned by
+	//  a previous call to memory_map and that the entire range should be released.
+	//  If release is set to 0, the unmap is a partial decommit of a subset of the mapped
+	//  memory range.
+	void (*memory_unmap)(void* address, size_t size, size_t offset, int release);
 	//! Size of memory pages. If set to 0, rpmalloc will use system calls to determine the page size.
 	//  The page size MUST be a power of two in [512,16384] range (2^9 to 2^14).
 	size_t page_size;
@@ -88,10 +88,6 @@ typedef struct rpmalloc_config_t {
 	//  space. The extra mapped pages will not be written until actually used, so physical
 	//  committed memory should not be affected in the default implementation.
 	size_t span_map_count;
-	//! Set to 1 if partial ranges can be unmapped of a mapped span of memory pages (like munmap
-	//  on POSIX systems). Set to 0 if the entire span needs to be unmapped at the same time (like
-	//  VirtualFree with MEM_RELEASE on Windows).
-	int unmap_partial;
 	//! Debug callback if memory guards are enabled. Called if a memory overwrite is detected
 	void (*memory_overwrite)(void* address);
 } rpmalloc_config_t;
