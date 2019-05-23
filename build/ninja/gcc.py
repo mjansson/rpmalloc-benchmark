@@ -68,11 +68,9 @@ class GCCToolchain(toolchain.Toolchain):
 
     if not 'nowarning' in variables or not variables['nowarning']:
       self.cflags += self.cwarnflags
-    else:
-      self.cflags += ['-w']
     self.cxxflags = list(self.cflags)
 
-    self.cflags += ['-std=gnu11']
+    self.cflags += ['-std=c11']
     if self.target.is_macos() or self.target.is_ios():
       self.cxxflags += ['-std=c++14', '-stdlib=libc++']
     else:

@@ -44,6 +44,7 @@ class Toolchain(object):
     self.target = target
     self.toolchain = toolchain
     self.subninja = ''
+    self.buildprefs = ''
 
     #Set default values
     self.build_monolithic = False
@@ -64,12 +65,6 @@ class Toolchain(object):
       self.dynamiclibext = '.so'
       self.binprefix = 'lib'
       self.binext = '.so'
-    elif target.is_pnacl():
-      self.libprefix = 'lib'
-      self.staticlibext = '.a'
-      self.dynamiclibext = '.so'
-      self.binprefix = ''
-      self.binext = '.bc'
     else:
       self.libprefix = 'lib'
       self.staticlibext = '.a'
@@ -136,7 +131,7 @@ class Toolchain(object):
     if self.target.is_windows():
       self.archs = ['x86-64']
     elif self.target.is_linux() or self.target.is_bsd():
-      localarch = subprocess.check_output(['uname', '-m']).strip()
+      localarch = subprocess.check_output(['uname', '-m']).decode().strip()
       if localarch == 'x86_64' or localarch == 'amd64':
         self.archs = ['x86-64']
       elif localarch == 'i686':
@@ -153,8 +148,6 @@ class Toolchain(object):
       self.archs = ['arm7', 'arm64', 'x86', 'x86-64'] #'mips', 'mips64'
     elif self.target.is_tizen():
       self.archs = ['x86', 'arm7']
-    elif self.target.is_pnacl():
-      self.archs = ['generic']
 
   def initialize_configs(self, configs):
     self.configs = list(configs)
@@ -162,7 +155,7 @@ class Toolchain(object):
       self.initialize_default_configs()
 
   def initialize_default_configs(self):
-    self.configs = ['debug', 'release'] #, 'profile', 'deploy']
+    self.configs = ['debug', 'release']
 
   def initialize_toolchain(self):
     if self.android != None:
@@ -223,6 +216,8 @@ class Toolchain(object):
   def read_build_prefs(self):
     self.read_prefs('build.json')
     self.read_prefs(os.path.join('build', 'ninja', 'build.json'))
+    if self.buildprefs != '':
+      self.read_prefs(self.buildprefs)
 
   def read_prefs(self, filename):
     if not os.path.isfile( filename ):
@@ -304,17 +299,16 @@ class Toolchain(object):
       path, targetfile = os.path.split(file)
       archpath = outpath
       #Find which arch we are copying from and append to target path
-      #unless on generic arch targets (only one generic arch)
-      if not self.target.is_pnacl():
-        for arch in archs:
-          remainpath, subdir = os.path.split(path)
-          while remainpath != '':
-            if subdir == arch:
-              archpath = os.path.join(outpath, arch)
-              break
-            remainpath, subdir = os.path.split(remainpath)
-          if remainpath != '':
+      #unless on generic arch targets, then re-add if not self.target.is_generic():
+      for arch in archs:
+        remainpath, subdir = os.path.split(path)
+        while remainpath != '':
+          if subdir == arch:
+            archpath = os.path.join(outpath, arch)
             break
+          remainpath, subdir = os.path.split(remainpath)
+        if remainpath != '':
+          break
       targetpath = os.path.join(archpath, targetfile)
       if os.path.normpath(file) != os.path.normpath(targetpath):
         archdir = self.mkdir(writer, archpath, implicit = rootdir)
@@ -392,7 +386,7 @@ class Toolchain(object):
     if not libs and dependlibs != None:
       libs = []
     if dependlibs != None:
-      libs += (dependlibs or [])
+      libs = (dependlibs or []) + libs
     nodevariables = (variables or {}).copy()
     nodevariables.update({
                      'libs': libs,
