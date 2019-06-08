@@ -171,8 +171,9 @@ if toolchain.name() == "gcc":
 	if target.is_linux():
 		generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = {'defines': ['USE_PREFIX']})
 
-fcmallocsources = [
-	'bit_index.cpp', 'fast_rand.cpp', 'hheap.cpp'
-]
-fcmalloc_depend_libs = ['benchmark', 'test']
-generator.bin(module = 'fc_malloc', sources = ['benchmark.c'] + fcmallocsources, binname = 'benchmark-fcmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = fcmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+#smmalloc does not seem to compile on x64
+#smmallocsources = [
+#	'smmalloc.cpp', 'smmalloc_tls.cpp'
+#]
+#smmalloc_depend_libs = ['benchmark', 'test']
+#generator.bin(module = 'smmalloc', sources = ['benchmark.c'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
