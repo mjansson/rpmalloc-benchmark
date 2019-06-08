@@ -69,7 +69,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#if defined HAVE_STDINT_H
+#ifdef HAVE_STDINT_H
 #include <stdint.h>        // for intptr_t
 #endif
 #include <sys/types.h>     // for size_t
@@ -144,6 +144,27 @@ static inline int PosixMemalign(void** ptr, size_t align, size_t size) {
 
 #endif
 
+#if defined(ENABLE_ALIGNED_NEW_DELETE)
+
+#define OVERALIGNMENT 64
+
+struct overaligned_type
+{
+#if defined(__GNUC__)
+  __attribute__((__aligned__(OVERALIGNMENT)))
+#elif defined(_MSC_VER)
+  __declspec(align(OVERALIGNMENT))
+#else
+  alignas(OVERALIGNMENT)
+#endif
+  unsigned char data[OVERALIGNMENT * 2]; // make the object size different from
+                                         // alignment to make sure the correct
+                                         // values are passed to the new/delete
+                                         // implementation functions
+};
+
+#endif // defined(ENABLE_ALIGNED_NEW_DELETE)
+
 // On systems (like freebsd) that don't define MAP_ANONYMOUS, use the old
 // form of the name instead.
 #ifndef MAP_ANONYMOUS
@@ -158,6 +179,37 @@ using std::string;
 DECLARE_double(tcmalloc_release_rate);
 DECLARE_int32(max_free_queue_size);     // in debugallocation.cc
 DECLARE_int64(tcmalloc_sample_parameter);
+
+struct OOMAbleSysAlloc : public SysAllocator {
+  SysAllocator *child;
+  int simulate_oom;
+
+  void* Alloc(size_t size, size_t* actual_size, size_t alignment) {
+    if (simulate_oom) {
+      return NULL;
+    }
+    return child->Alloc(size, actual_size, alignment);
+  }
+};
+
+static union {
+  char buf[sizeof(OOMAbleSysAlloc)];
+  void *ptr;
+} test_sys_alloc_space;
+
+static OOMAbleSysAlloc* get_test_sys_alloc() {
+  return reinterpret_cast<OOMAbleSysAlloc*>(&test_sys_alloc_space);
+}
+
+void setup_oomable_sys_alloc() {
+  SysAllocator *def = MallocExtension::instance()->GetSystemAllocator();
+
+  OOMAbleSysAlloc *alloc = get_test_sys_alloc();
+  new (alloc) OOMAbleSysAlloc;
+  alloc->child = def;
+
+  MallocExtension::instance()->SetSystemAllocator(alloc);
+}
 
 namespace testing {
 
@@ -627,7 +679,7 @@ static void TestRealloc() {
 #endif
 }
 
-static void TestNewHandler() throw (std::bad_alloc) {
+static void TestNewHandler() {
   ++news_handled;
   throw std::bad_alloc();
 }
@@ -1079,8 +1131,7 @@ struct GlobalNallocx {
 
 #if defined(__GNUC__)
 
-// 101 is the max user priority.
-static void check_global_nallocx() __attribute__((constructor(101)));
+static void check_global_nallocx() __attribute__((constructor));
 static void check_global_nallocx() { CHECK_GT(nallocx(99, 0), 99); }
 
 #endif // __GNUC__
@@ -1108,13 +1159,51 @@ static void TestNAllocXAlignment() {
   }
 }
 
-#endif // !DEBUGALLOCATION
+static int saw_new_handler_runs;
+static void* volatile oom_test_last_ptr;
+
+static void test_new_handler() {
+  get_test_sys_alloc()->simulate_oom = false;
+  void *ptr = oom_test_last_ptr;
+  oom_test_last_ptr = NULL;
+  ::operator delete[](ptr);
+  saw_new_handler_runs++;
+}
+
+static ATTRIBUTE_NOINLINE void TestNewOOMHandling() {
+  // debug allocator does internal allocations and crashes when such
+  // internal allocation fails. So don't test it.
+  setup_oomable_sys_alloc();
+
+  std::new_handler old = std::set_new_handler(test_new_handler);
+  get_test_sys_alloc()->simulate_oom = true;
+
+  ASSERT_EQ(saw_new_handler_runs, 0);
+
+  for (int i = 0; i < 10240; i++) {
+    oom_test_last_ptr = new char [512];
+    ASSERT_NE(oom_test_last_ptr, NULL);
+    if (saw_new_handler_runs) {
+      break;
+    }
+  }
+
+  ASSERT_GE(saw_new_handler_runs, 1);
+
+  get_test_sys_alloc()->simulate_oom = false;
+  std::set_new_handler(old);
+}
+#endif  // !DEBUGALLOCATION
 
 static int RunAllTests(int argc, char** argv) {
   // Optional argv[1] is the seed
   AllocatorState rnd(argc > 1 ? atoi(argv[1]) : 100);
 
   SetTestResourceLimit();
+
+#ifndef DEBUGALLOCATION
+  TestNewOOMHandling();
+#endif
 
   // TODO(odo):  This test has been disabled because it is only by luck that it
   // does not result in fragmentation.  When tcmalloc makes an allocation which
@@ -1287,9 +1376,86 @@ static int RunAllTests(int argc, char** argv) {
     ::operator delete(p2, std::nothrow);
     VerifyDeleteHookWasCalled();
 
+#ifdef ENABLE_SIZED_DELETE
+    p2 = new char;
+    CHECK(p2 != NULL);
+    VerifyNewHookWasCalled();
+    ::operator delete(p2, sizeof(char));
+    VerifyDeleteHookWasCalled();
+
+    p2 = new char[100];
+    CHECK(p2 != NULL);
+    VerifyNewHookWasCalled();
+    ::operator delete[](p2, sizeof(char) * 100);
+    VerifyDeleteHookWasCalled();
+#endif
+
+#if defined(ENABLE_ALIGNED_NEW_DELETE)
+
+    overaligned_type* poveraligned = new overaligned_type;
+    CHECK(poveraligned != NULL);
+    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    delete poveraligned;
+    VerifyDeleteHookWasCalled();
+
+    poveraligned = new overaligned_type[10];
+    CHECK(poveraligned != NULL);
+    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    delete[] poveraligned;
+    VerifyDeleteHookWasCalled();
+
+    poveraligned = new(std::nothrow) overaligned_type;
+    CHECK(poveraligned != NULL);
+    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    delete poveraligned;
+    VerifyDeleteHookWasCalled();
+
+    poveraligned = new(std::nothrow) overaligned_type[10];
+    CHECK(poveraligned != NULL);
+    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    delete[] poveraligned;
+    VerifyDeleteHookWasCalled();
+
+    // Another way of calling operator new
+    p2 = static_cast<char*>(::operator new(100, std::align_val_t(OVERALIGNMENT)));
+    CHECK(p2 != NULL);
+    CHECK((((size_t)p2) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    ::operator delete(p2, std::align_val_t(OVERALIGNMENT));
+    VerifyDeleteHookWasCalled();
+
+    p2 = static_cast<char*>(::operator new(100, std::align_val_t(OVERALIGNMENT), std::nothrow));
+    CHECK(p2 != NULL);
+    CHECK((((size_t)p2) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    ::operator delete(p2, std::align_val_t(OVERALIGNMENT), std::nothrow);
+    VerifyDeleteHookWasCalled();
+
+#ifdef ENABLE_SIZED_DELETE
+    poveraligned = new overaligned_type;
+    CHECK(poveraligned != NULL);
+    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    ::operator delete(poveraligned, sizeof(overaligned_type), std::align_val_t(OVERALIGNMENT));
+    VerifyDeleteHookWasCalled();
+
+    poveraligned = new overaligned_type[10];
+    CHECK(poveraligned != NULL);
+    CHECK((((size_t)poveraligned) % OVERALIGNMENT) == 0u);
+    VerifyNewHookWasCalled();
+    ::operator delete[](poveraligned, sizeof(overaligned_type) * 10, std::align_val_t(OVERALIGNMENT));
+    VerifyDeleteHookWasCalled();
+#endif
+
+#endif // defined(ENABLE_ALIGNED_NEW_DELETE)
+
     // Try strdup(), which the system allocates but we must free.  If
     // all goes well, libc will use our malloc!
-    p2 = strdup("test");
+    p2 = strdup("in memory of James Golick");
     CHECK(p2 != NULL);
     VerifyNewHookWasCalled();
     free(p2);

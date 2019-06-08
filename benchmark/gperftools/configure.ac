@@ -4,11 +4,11 @@
 # make sure we're interpreted by some minimal autoconf
 AC_PREREQ([2.59])
 
-AC_INIT([gperftools],[2.5],[gperftools@googlegroups.com])
+AC_INIT([gperftools],[2.7],[gperftools@googlegroups.com])
 # Update this value for every release!  (A:B:C will map to foo.so.(A-C).C.B)
 # http://www.gnu.org/software/libtool/manual/html_node/Updating-version-info.html
-TCMALLOC_SO_VERSION=7:0:3
-PROFILER_SO_VERSION=4:8:4
+TCMALLOC_SO_VERSION=9:3:5
+PROFILER_SO_VERSION=4:18:4
 
 AC_SUBST(TCMALLOC_SO_VERSION)
 AC_SUBST(PROFILER_SO_VERSION)
@@ -149,6 +149,8 @@ AC_PROG_CPP
 AM_CONDITIONAL(GCC, test "$GCC" = yes)   # let the Makefile know if we're gcc
 AM_PROG_CC_C_O      # shrug: autogen.sh suddenly needs this for some reason
 
+AX_CXX_COMPILE_STDCXX(11, ext, mandatory)
+
 # Check if we have an objcopy installed that supports -W
 AC_CHECK_TOOL([OBJCOPY], [objcopy], [])
 AS_IF([test -n "$OBJCOPY"], [dnl
@@ -165,6 +167,22 @@ AC_PROG_LIBTOOL
 AC_C_INLINE
 AX_C___ATTRIBUTE__
 
+AC_MSG_CHECKING(for __attribute__((aligned(N))) on functions)
+AC_CACHE_VAL(ac_cv___attribute__aligned_fn, [
+  AC_TRY_COMPILE(
+    [#include <stdlib.h>
+     void foo(void) __attribute__((aligned(128)));
+     void foo(void) { exit(1); }],
+    [],
+    ac_cv___attribute__aligned_fn=yes,
+    ac_cv___attribute__aligned_fn=no
+  )])
+if test "$ac_cv___attribute__aligned_fn" = "yes"; then
+  AC_DEFINE(HAVE___ATTRIBUTE__ALIGNED_FN, 1, [define if your compiler supports alignment of functions])
+fi
+AC_MSG_RESULT($ac_cv___attribute__aligned_fn)
+
+
 # Check whether some low-level functions/files are available
 AC_HEADER_STDC
 
@@ -173,6 +191,7 @@ AC_CHECK_TYPES([__int64])       # defined in some windows platforms
 AC_CHECK_TYPES([struct mallinfo],,, [#include <malloc.h>])
 AC_CHECK_TYPES([Elf32_Versym],,, [#include <elf.h>])   # for vdso_support.h
 AC_CHECK_FUNCS(sbrk)            # for tcmalloc to get memory
+AC_CHECK_FUNCS(__sbrk)          # for tcmalloc to get memory
 AC_CHECK_FUNCS(geteuid)         # for turning off services when run as root
 AC_CHECK_FUNCS(fork)            # for the pthread_atfork setup
 AC_CHECK_HEADERS(features.h)    # for vdso_support.h
@@ -215,31 +234,11 @@ else
   AC_SUBST(ac_cv_have_struct_mallinfo, 0)
 fi
 
-# We need to check for mmap.  cygwin supports mmap, but the autoconf
-# test doesn't work on cygwin:
-#    http://www.cygwin.com/ml/cygwin/2002-04/msg00412.html
-# This workaround comes from
-#    http://cygwin.com/ml/cygwin/2004-11/msg00138.html
-case "$host" in
-  *-*-mingw*)
-               dnl mingw doesn't have mmap, not worth
-               dnl checking. Especially given that mingw can be a
-               dnl cross-compiler
-               ;;
-  *-*-cygwin*)
-	       ac_cv_func_mmap_fixed_mapped=yes
-               AC_DEFINE(HAVE_MMAP, 1,
-                         [Define to 1 if you have a working `mmap' system call.])
-               ;;
-            *) if test "$cross_compiling" = yes; then
-                 ac_cv_func_mmap_fixed_mapped=yes
-                 AC_DEFINE(HAVE_MMAP, 1,
-                           [Define to 1 if you have a working `mmap' system call.])
-               else
-                 AC_FUNC_MMAP
-               fi
-               ;;
-esac
+# We hardcode HAVE_MMAP to 1. There are no interesting systems anymore
+# without functional mmap. And our windows builds aren't using
+# autoconf. So we keep HAVE_MMAP define, but only to distingush
+# windows and rest.
+AC_DEFINE(HAVE_MMAP, 1, [Define to 1 if you have a working `mmap' system call.])
 
 # If AtomicWord != Atomic32, we need to define two versions of all the
 # atomicops functions.  If they're the same, we want to define only one.
@@ -262,17 +261,14 @@ fi
 # Some tests test the behavior of .so files, and only make sense for dynamic.
 AM_CONDITIONAL(ENABLE_STATIC, test "$enable_static" = yes)
 
-# We want to link in libunwind or libexecinfo if it it is enabled and exists.
+# We want to link in libunwind if it is enabled and exists.
+UNWIND_LIBS=
 if test "$enable_libunwind" = yes; then
-  AC_CHECK_HEADERS(libunwind.h)   # for stacktrace
-  AC_CHECK_LIB(unwind, backtrace, UNWIND_LIBS=-lunwind,
-               [AC_CHECK_LIB(execinfo, backtrace, UNWIND_LIBS=-lexecinfo, UNWIND_LIBS=)])
-  AC_SUBST(UNWIND_LIBS)
-  will_use_libunwind=yes
-else
-  AC_CHECK_LIB(execinfo, backtrace, UNWIND_LIBS=-lexecinfo, UNWIND_LIBS=)
-  AC_SUBST(UNWIND_LIBS)
+  AC_CHECK_HEADERS([libunwind.h],
+                   [AC_CHECK_LIB(unwind, backtrace, UNWIND_LIBS=-lunwind)
+                    will_use_libunwind=yes])
 fi
+AC_SUBST(UNWIND_LIBS)
 
 # On x86_64, instead of libunwind, we can choose to compile with frame-pointers.
 AC_ARG_ENABLE(frame_pointers,
@@ -331,6 +327,16 @@ AC_CACHE_CHECK([if the compiler supports -Wno-unused-result],
 AM_CONDITIONAL(HAVE_W_NO_UNUSED_RESULT,
 	       test "$perftools_cv_w_no_unused_result" = yes)
 
+AC_ARG_ENABLE([deprecated-pprof],
+              [AS_HELP_STRING([--disable-deprecated-pprof],
+                [do not install old deprecated and unmaintained bundled pprof
+(see github.com/google/pprof for supported version)])],
+              [enable_pprof="$enableval"],
+              [enable_pprof=yes])
+
+AM_CONDITIONAL(INSTALL_PPROF,
+               [test "x$enable_pprof" = xyes])
+
 AC_ARG_ENABLE([dynamic-sized-delete-support],
               [AS_HELP_STRING([--enable-dynamic-sized-delete-support],
                 [try to build run-time switch for sized delete operator])],
@@ -351,16 +357,17 @@ AS_IF([test "x$enable_sized_delete" = xyes],
          AC_MSG_NOTICE([Will build sized deallocation operators])],
       [AS_IF([test "x$enable_dyn_sized_delete" = xyes],
              [AC_MSG_NOTICE([Will build dynamically detected sized deallocation operators])],
-             [AC_MSG_NOTICE([Will not build sized deallocation operators])])])
+             [AC_MSG_NOTICE([Will build sized deallocation operators that ignore size])])])
 
 AC_CACHE_CHECK([if C++ compiler supports -fsized-deallocation],
                [perftools_cv_sized_deallocation_result],
                [AC_LANG_PUSH(C++)
                 OLD_CXXFLAGS="$CXXFLAGS"
                 CXXFLAGS="$CXXFLAGS -fsized-deallocation"
-                AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-                    [[#include <new>]],
-                    [[(::operator delete)(0, 256)]])],
+                AC_LINK_IFELSE([AC_LANG_PROGRAM(
+                    [[#include <new>
+#include <stddef.h>]],
+                    [[static void (* volatile ptr)(void *, size_t) = ::operator delete; (*ptr)(0, 256);]])],
                  perftools_cv_sized_deallocation_result=yes,
                  perftools_cv_sized_deallocation_result=no)
                 CXXFLAGS="$OLD_CXXFLAGS"
@@ -368,6 +375,44 @@ AC_CACHE_CHECK([if C++ compiler supports -fsized-deallocation],
 
 AM_CONDITIONAL(HAVE_SIZED_DEALLOCATION,
                test "$perftools_cv_sized_deallocation_result" = yes)
+
+AC_CACHE_CHECK([if C++ compiler supports std::align_val_t without options],
+               [perftools_cv_have_align_val_t],
+               [AC_LANG_PUSH(C++)
+                AC_LINK_IFELSE([AC_LANG_PROGRAM(
+                    [[#include <new>]],
+                    [[(::operator delete)((::operator new)(256, std::align_val_t(16)), std::align_val_t(16))]])],
+                 perftools_cv_have_align_val_t=yes,
+                 perftools_cv_have_align_val_t=no)
+                AC_LANG_POP(C++)])
+
+AC_CACHE_CHECK([if C++ compiler supports -faligned-new],
+               [perftools_cv_have_f_aligned_new],
+               [AC_LANG_PUSH(C++)
+                OLD_CXXFLAGS="$CXXFLAGS"
+                CXXFLAGS="$CXXFLAGS -faligned-new"
+                AC_LINK_IFELSE([AC_LANG_PROGRAM(
+                    [[#include <new>]],
+                    [[(::operator delete)((::operator new)(256, std::align_val_t(16)), std::align_val_t(16))]])],
+                 perftools_cv_have_f_aligned_new=yes,
+                 perftools_cv_have_f_aligned_new=no)
+                CXXFLAGS="$OLD_CXXFLAGS"
+                AC_LANG_POP(C++)])
+
+AM_CONDITIONAL(HAVE_F_ALIGNED_NEW,
+               test "$perftools_cv_have_f_aligned_new" = yes)
+
+AS_IF([test "$perftools_cv_have_align_val_t" = yes || test "$perftools_cv_have_f_aligned_new" = yes],
+        [AC_DEFINE([ENABLE_ALIGNED_NEW_DELETE], 1, [Build new/delete operators for overaligned types])
+         AC_MSG_NOTICE([Will build new/delete operators for overaligned types])],
+         AC_MSG_NOTICE([Will not build new/delete operators for overaligned types]))
+
+if test "$perftools_cv_have_align_val_t" = yes || test "$perftools_cv_have_f_aligned_new" = yes; then
+  AC_SUBST(ac_cv_have_std_align_val_t, 1)   # gperftools/tcmalloc.h and windows/gperftools/tcmalloc.h need this
+else
+  AC_SUBST(ac_cv_have_std_align_val_t, 0)
+fi
+
 
 AC_CACHE_CHECK([if target has _Unwind_Backtrace],
                [perftools_cv_have_unwind_backtrace],
@@ -413,14 +458,6 @@ AC_MSG_CHECKING([for __builtin_stack_pointer()])
 AC_LINK_IFELSE([AC_LANG_PROGRAM(, [void *sp = __builtin_stack_pointer()])],
                [AC_DEFINE(HAVE_BUILTIN_STACK_POINTER, 1,
                       Define to 1 if compiler supports __builtin_stack_pointer)
-                AC_MSG_RESULT([yes])],
-               [AC_MSG_RESULT([no])])
-
-# Check for __builtin_expect()
-AC_MSG_CHECKING([for __builtin_expect()])
-AC_LINK_IFELSE([AC_LANG_PROGRAM(, return __builtin_expect(main != 0, 1))],
-               [AC_DEFINE(HAVE_BUILTIN_EXPECT, 1,
-                          Define to 1 if compiler supports __builtin_expect)
                 AC_MSG_RESULT([yes])],
                [AC_MSG_RESULT([no])])
 
@@ -520,6 +557,11 @@ esac
 
 if test "x$enable_backtrace" = xyes; then
   AC_CHECK_DECLS([backtrace], [], [], [#include <execinfo.h>])
+  save_LIBS=$LIBS
+  LIBS=$UNWIND_LIBS
+  AC_SEARCH_LIBS([backtrace], [execinfo])
+  UNWIND_LIBS=$LIBS
+  LIBS=$save_LIBS
 fi
 
 # For windows, this has a non-trivial value (__declspec(export)), but any
@@ -596,6 +638,26 @@ AC_COMPILE_IFELSE(
          AC_MSG_RESULT([yes])],
         [AC_MSG_RESULT([no])])
 
+# Disable large allocation report by default.
+AC_ARG_ENABLE([large-alloc-report],
+              [AS_HELP_STRING([--enable-large-alloc-report],
+                              [report very large allocations to stderr])],
+              [enable_large_alloc_report="$enableval"],
+              [enable_large_alloc_report=no])
+AS_IF([test "x$enable_large_alloc_report" = xyes],
+      [AC_DEFINE([ENABLE_LARGE_ALLOC_REPORT], 1, [report large allocation])])
+
+# Enable aggressive decommit by default
+AC_ARG_ENABLE([aggressive-decommit-by-default],
+              [AS_HELP_STRING([--enable-aggressive-decommit-by-default],
+                              [enable aggressive decommit by default])],
+              [enable_aggressive_decommit_by_default="$enableval"],
+              [enable_aggressive_decommit_by_default=no])
+AS_IF([test "x$enable_aggressive_decommit_by_default" = xyes],
+      [AC_DEFINE([ENABLE_AGGRESSIVE_DECOMMIT_BY_DEFAULT],
+                 1,
+                 [enable aggressive decommit by default])])
+
 # Write generated configuration file
 AC_CONFIG_FILES([Makefile
                  src/gperftools/tcmalloc.h src/windows/gperftools/tcmalloc.h])
@@ -603,7 +665,7 @@ AC_OUTPUT
 
 AS_IF([test "$x86_no_fp_by_default" = yes && test "x$enable_frame_pointers" != xyes && test "x$UNWIND_LIBS" = x && test "x$enable_minimal" != xyes],
   [AS_IF([test "x$perftools_cv_have_unwind_backtrace" = xyes],
-    [AC_MSG_WARN([No frame pointers and no libunwind. Using experimental backtrace capturing via libgcc])],
+    [AC_MSG_WARN([No frame pointers and no libunwind. Using experimental backtrace capturing via libgcc. Expect crashy cpu profiler.])],
     [AS_IF([test "x$enable_backtrace" = xyes],
-      [AC_MSG_WARN([No frame pointers and no libunwind.  Using experimental backtrace()])],
+      [AC_MSG_WARN([No frame pointers and no libunwind.  Using experimental backtrace(). Expect crashy cpu profiler.])],
       [AC_MSG_FAILURE([No frame pointers and no libunwind. The compilation will fail])])])])

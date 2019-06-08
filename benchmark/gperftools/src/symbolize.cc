@@ -60,19 +60,24 @@
 #include "base/commandlineflags.h"
 #include "base/logging.h"
 #include "base/sysinfo.h"
+#if defined(__FreeBSD__)
+#include <sys/sysctl.h>
+#endif
 
 using std::string;
 using tcmalloc::DumpProcSelfMaps;   // from sysinfo.h
 
-
-DEFINE_string(symbolize_pprof,
-              EnvToString("PPROF_PATH", "pprof"),
-              "Path to pprof to call for reporting function names.");
-
-// heap_profile_table_pprof may be referenced after destructors are
+// pprof may be used after destructors are
 // called (since that's when leak-checking is done), so we make
 // a more-permanent copy that won't ever get destroyed.
-static string* g_pprof_path = new string(FLAGS_symbolize_pprof);
+static char* get_pprof_path() {
+  static char* result = ([] () {
+      string pprof_string = EnvToString("PPROF_PATH", "pprof-symbolize");
+      return strdup(pprof_string.c_str());
+    })();
+
+  return result;
+}
 
 // Returns NULL if we're on an OS where we can't get the invocation name.
 // Using a static var is ok because we're not called from a thread.
@@ -94,6 +99,13 @@ static const char* GetProgramInvocationName() {
       return NULL;
   }
   return program_invocation_name;
+#elif defined(__FreeBSD__)
+  static char program_invocation_name[PATH_MAX];
+  size_t len = sizeof(program_invocation_name);
+  static const int name[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+  if (!sysctl(name, 4, program_invocation_name, &len, NULL, 0))
+    return program_invocation_name;
+  return NULL;
 #else
   return NULL;   // figure out a way to get argv[0]
 #endif
@@ -134,7 +146,7 @@ int SymbolTable::Symbolize() {
     PrintError("Cannot figure out the name of this executable (argv0)");
     return 0;
   }
-  if (access(g_pprof_path->c_str(), R_OK) != 0) {
+  if (access(get_pprof_path(), R_OK) != 0) {
     PrintError("Cannot find 'pprof' (is PPROF_PATH set correctly?)");
     return 0;
   }
@@ -196,7 +208,7 @@ int SymbolTable::Symbolize() {
       unsetenv("HEAPPROFILE");
       unsetenv("HEAPCHECK");
       unsetenv("PERFTOOLS_VERBOSE");
-      execlp(g_pprof_path->c_str(), g_pprof_path->c_str(),
+      execlp(get_pprof_path(), get_pprof_path(),
              "--symbols", argv0, NULL);
       _exit(3);  // if execvp fails, it's bad news for us
     }
@@ -238,6 +250,7 @@ int SymbolTable::Symbolize() {
       }
       write(child_in[1], pprof_buffer, strlen(pprof_buffer));
       close(child_in[1]);             // that's all we need to write
+      delete[] pprof_buffer;
 
       const int kSymbolBufferSize = kSymbolSize * symbolization_table_.size();
       int total_bytes_read = 0;

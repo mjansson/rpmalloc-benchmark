@@ -87,9 +87,9 @@ if not target.is_windows():
 	gperftoolsbasesources += ['thread_lister.c']
 gperftoolsbasesources = [os.path.join('src', 'base', path) for path in gperftoolsbasesources]
 gperftoolssources = [
-	'central_freelist.cc', 'common.cc', 'fake_stacktrace_scope.cc', 'heap-checker.cc', 'heap-profile-table.cc', 'heap-checker-bcad.cc', 'internal_logging.cc',
+	'central_freelist.cc', 'common.cc', 'fake_stacktrace_scope.cc', 'internal_logging.cc',
 	'malloc_extension.cc', 'malloc_hook.cc', 'memfs_malloc.cc', 'memory_region_map.cc',
-	'page_heap.cc', 'raw_printer.cc', 'sampler.cc',  'stacktrace.cc', 'stack_trace_table.cc',
+	'page_heap.cc', 'raw_printer.cc', 'sampler.cc', 'stack_trace_table.cc',
 	'static_vars.cc', 'span.cc', 'symbolize.cc', 'tcmalloc.cc', 'thread_cache.cc'
 ]
 if not target.is_windows():
@@ -98,9 +98,9 @@ if target.is_windows():
 	gperftoolssources += [os.path.join('windows', 'port.cc'), os.path.join('windows', 'system-alloc.cc')]
 gperftoolssources = [os.path.join('src', path) for path in gperftoolssources]
 if not target.is_android():
-	gperftools_lib = generator.lib(module = 'gperftools', sources = gperftoolsbasesources + gperftoolssources, basepath = 'benchmark', includepaths = includepaths + gperftoolsincludepaths)
+	gperftools_lib = generator.lib(module = 'gperftools', sources = gperftoolsbasesources + gperftoolssources, basepath = 'benchmark', includepaths = includepaths + gperftoolsincludepaths, variables = {'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK']})
 	gperftools_depend_libs = ['gperftools', 'benchmark', 'test']
-	generator.bin(module = 'gperftools', sources = ['benchmark.c'], binname = 'benchmark-tcmalloc', basepath = 'benchmark', implicit_deps = [gperftools_lib, benchmark_lib, test_lib], libs = gperftools_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	generator.bin(module = 'gperftools', sources = ['benchmark.c'], binname = 'benchmark-tcmalloc', basepath = 'benchmark', implicit_deps = [gperftools_lib, benchmark_lib, test_lib], libs = gperftools_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK']})
 
 jemallocincludepaths = [
 	os.path.join('benchmark', 'jemalloc', 'include'),

@@ -82,7 +82,7 @@
 #pragma warning(disable:4018 4244 4288 4267 4290 4996 4146)
 #endif
 
-#if !defined(__cplusplus) && !defined(inline)
+#ifndef __cplusplus
 /* MSVC does not support C99 */
 # if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 199901L
 #  ifdef _MSC_VER
@@ -176,12 +176,6 @@ inline int perftools_pthread_setspecific(pthread_key_t key, const void *value) {
 EXTERN_C int perftools_pthread_once(pthread_once_t *once_control,
                                     void (*init_routine)(void));
 
-#ifdef __cplusplus
-class SpinLock;
-EXTERN_C int perftools_pthread_once_spinlock(SpinLock* lock, pthread_once_t *once_control,
-	void(SpinLock::*init_routine)(void));
-#endif
-
 #endif  /* __cplusplus */
 
 inline void sched_yield(void) {
@@ -205,7 +199,6 @@ inline void sched_yield(void) {
  * back to using native spinlocks.
  */
 #if 0
-#define SPIN_LOCK_INTERNAL_WIN32
 // Windows uses a spinlock internally for its mutexes, making our life easy!
 // However, the Windows spinlock must always be initialized, making life hard,
 // since we want LINKER_INITIALIZED.  We work around this by having the
@@ -217,8 +210,8 @@ class SpinLock {
   SpinLock() : initialize_token_(PTHREAD_ONCE_INIT) {}
   // Used for global SpinLock vars (see base/spinlock.h for more details).
   enum StaticInitializer { LINKER_INITIALIZED };
-  explicit SpinLock(int) : initialize_token_(PTHREAD_ONCE_INIT) {
-	  perftools_pthread_once_spinlock(this, &initialize_token_, &SpinLock::InitializeMutex);
+  explicit SpinLock(StaticInitializer) : initialize_token_(PTHREAD_ONCE_INIT) {
+    perftools_pthread_once(&initialize_token_, InitializeMutex);
   }
 
   // It's important SpinLock not have a destructor: otherwise we run
@@ -239,7 +232,7 @@ class SpinLock {
     // before our global constructor does.  To protect against that,
     // we do this check.  For SpinLock objects created after main()
     // has started, this pthread_once call will always be a noop.
-    perftools_pthread_once_spinlock(this, &initialize_token_, &SpinLock::InitializeMutex);
+    perftools_pthread_once(&initialize_token_, InitializeMutex);
     EnterCriticalSection(&mutex_);
   }
   void Unlock() {
@@ -347,6 +340,7 @@ inline int snprintf(char *str, size_t size, const char *format, ...) {
 }
 #endif
 
+#ifndef HAVE_INTTYPES_H
 #define PRIx64  "I64x"
 #define SCNx64  "I64x"
 #define PRId64  "I64d"
@@ -358,6 +352,7 @@ inline int snprintf(char *str, size_t size, const char *format, ...) {
 #else
 # define PRIuPTR "lu"
 # define PRIxPTR "lx"
+#endif
 #endif
 
 /* ----------------------------------- FILE IO */

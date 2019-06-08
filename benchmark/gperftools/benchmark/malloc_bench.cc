@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#include <algorithm>
+
 #include "run_benchmark.h"
 
 static void bench_fastpath_throughput(long iterations,
@@ -43,7 +45,7 @@ static void bench_fastpath_throughput(long iterations,
     free(p);
     // this makes next iteration use different free list. So
     // subsequent iterations may actually overlap in time.
-    sz = (sz & 511) + 16;
+    sz = ((sz * 8191) & 511) + 16;
   }
 }
 
@@ -66,7 +68,7 @@ static void bench_fastpath_dependent(long iterations,
 static void bench_fastpath_simple(long iterations,
                                   uintptr_t param)
 {
-  size_t sz = 64;
+  size_t sz = static_cast<size_t>(param);
   for (; iterations>0; iterations--) {
     void *p = malloc(sz);
     if (!p) {
@@ -79,6 +81,58 @@ static void bench_fastpath_simple(long iterations,
     // we'll hit size class cache.
   }
 }
+
+#ifdef __GNUC__
+#define HAVE_SIZED_FREE_OPTION
+
+extern "C" void tc_free_sized(void *ptr, size_t size) __attribute__((weak));
+extern "C" void *tc_memalign(size_t align, size_t size) __attribute__((weak));
+
+static bool is_sized_free_available(void)
+{
+  return tc_free_sized != NULL;
+}
+
+static bool is_memalign_available(void)
+{
+  return tc_memalign != NULL;
+}
+
+static void bench_fastpath_simple_sized(long iterations,
+                                        uintptr_t param)
+{
+  size_t sz = static_cast<size_t>(param);
+  for (; iterations>0; iterations--) {
+    void *p = malloc(sz);
+    if (!p) {
+      abort();
+    }
+    tc_free_sized(p, sz);
+    // next iteration will use same free list as this iteration. So it
+    // should be prevent next iterations malloc to go too far before
+    // free done. But using same size will make free "too fast" since
+    // we'll hit size class cache.
+  }
+}
+
+static void bench_fastpath_memalign(long iterations,
+                                    uintptr_t param)
+{
+  size_t sz = static_cast<size_t>(param);
+  for (; iterations>0; iterations--) {
+    void *p = tc_memalign(32, sz);
+    if (!p) {
+      abort();
+    }
+    free(p);
+    // next iteration will use same free list as this iteration. So it
+    // should be prevent next iterations malloc to go too far before
+    // free done. But using same size will make free "too fast" since
+    // we'll hit size class cache.
+  }
+}
+
+#endif // __GNUC__
 
 #define STACKSZ (1 << 16)
 
@@ -168,11 +222,66 @@ static void bench_fastpath_rnd_dependent(long iterations,
   }
 }
 
+static void *randomize_buffer[13<<20];
+
+
+void randomize_one_size_class(size_t size) {
+  int count = (100<<20) / size;
+  if (count * sizeof(randomize_buffer[0]) > sizeof(randomize_buffer)) {
+    abort();
+  }
+  for (int i = 0; i < count; i++) {
+    randomize_buffer[i] = malloc(size);
+  }
+  std::random_shuffle(randomize_buffer, randomize_buffer + count);
+  for (int i = 0; i < count; i++) {
+    free(randomize_buffer[i]);
+  }
+}
+
+void randomize_size_classes() {
+  randomize_one_size_class(8);
+  int i;
+  for (i = 16; i < 256; i += 16) {
+    randomize_one_size_class(i);
+  }
+  for (; i < 512; i += 32) {
+    randomize_one_size_class(i);
+  }
+  for (; i < 1024; i += 64) {
+    randomize_one_size_class(i);
+  }
+  for (; i < (4 << 10); i += 128) {
+    randomize_one_size_class(i);
+  }
+  for (; i < (32 << 10); i += 1024) {
+    randomize_one_size_class(i);
+  }
+}
+
 int main(void)
 {
+  randomize_size_classes();
+
   report_benchmark("bench_fastpath_throughput", bench_fastpath_throughput, 0);
   report_benchmark("bench_fastpath_dependent", bench_fastpath_dependent, 0);
-  report_benchmark("bench_fastpath_simple", bench_fastpath_simple, 0);
+  report_benchmark("bench_fastpath_simple", bench_fastpath_simple, 64);
+  report_benchmark("bench_fastpath_simple", bench_fastpath_simple, 2048);
+  report_benchmark("bench_fastpath_simple", bench_fastpath_simple, 16384);
+
+#ifdef HAVE_SIZED_FREE_OPTION
+  if (is_sized_free_available()) {
+    report_benchmark("bench_fastpath_simple_sized", bench_fastpath_simple_sized, 64);
+    report_benchmark("bench_fastpath_simple_sized", bench_fastpath_simple_sized, 2048);
+  }
+
+  if (is_memalign_available()) {
+    report_benchmark("bench_fastpath_memalign", bench_fastpath_memalign, 64);
+    report_benchmark("bench_fastpath_memalign", bench_fastpath_memalign, 2048);
+  }
+
+#endif
+
   for (int i = 8; i <= 512; i <<= 1) {
     report_benchmark("bench_fastpath_stack", bench_fastpath_stack, i);
   }

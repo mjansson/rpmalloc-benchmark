@@ -36,7 +36,7 @@ namespace HL {
   template <class Super>
   class ExceptionHeap : public Super {
   public:
-    inline void * malloc (size_t sz) throw (std::bad_alloc) {
+    inline void * malloc (size_t sz) noexcept(false) {
       void * ptr = Super::malloc (sz);
       if (ptr == NULL) {
 	throw new std::bad_alloc;
