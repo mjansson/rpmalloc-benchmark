@@ -1,6 +1,11 @@
 #ifndef JEMALLOC_INTERNAL_PROF_STRUCTS_H
 #define JEMALLOC_INTERNAL_PROF_STRUCTS_H
 
+#include "jemalloc/internal/ckh.h"
+#include "jemalloc/internal/mutex.h"
+#include "jemalloc/internal/prng.h"
+#include "jemalloc/internal/rb.h"
+
 struct prof_bt_s {
 	/* Backtrace, stored as len program counters. */
 	void		**vec;
@@ -18,8 +23,10 @@ typedef struct {
 struct prof_accum_s {
 #ifndef JEMALLOC_ATOMIC_U64
 	malloc_mutex_t	mtx;
-#endif
 	uint64_t	accumbytes;
+#else
+	atomic_u64_t	accumbytes;
+#endif
 };
 
 struct prof_cnt_s {
@@ -162,7 +169,6 @@ struct prof_tdata_s {
 
 	/* Sampling state. */
 	uint64_t		prng_state;
-	uint64_t		bytes_until_sample;
 
 	/* State used to avoid dumping while operating on prof internals. */
 	bool			enq;

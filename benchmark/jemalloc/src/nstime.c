@@ -1,6 +1,12 @@
-#include "jemalloc/internal/jemalloc_internal.h"
+#include "jemalloc/internal/jemalloc_preamble.h"
+#include "jemalloc/internal/jemalloc_internal_includes.h"
+
+#include "jemalloc/internal/nstime.h"
+
+#include "jemalloc/internal/assert.h"
 
 #define BILLION	UINT64_C(1000000000)
+#define MILLION	UINT64_C(1000000)
 
 void
 nstime_init(nstime_t *time, uint64_t ns) {
@@ -15,6 +21,11 @@ nstime_init2(nstime_t *time, uint64_t sec, uint64_t nsec) {
 uint64_t
 nstime_ns(const nstime_t *time) {
 	return time->ns;
+}
+
+uint64_t
+nstime_msec(const nstime_t *time) {
+	return time->ns / MILLION;
 }
 
 uint64_t
@@ -45,10 +56,24 @@ nstime_add(nstime_t *time, const nstime_t *addend) {
 }
 
 void
+nstime_iadd(nstime_t *time, uint64_t addend) {
+	assert(UINT64_MAX - time->ns >= addend);
+
+	time->ns += addend;
+}
+
+void
 nstime_subtract(nstime_t *time, const nstime_t *subtrahend) {
 	assert(nstime_compare(time, subtrahend) >= 0);
 
 	time->ns -= subtrahend->ns;
+}
+
+void
+nstime_isubtract(nstime_t *time, uint64_t subtrahend) {
+	assert(time->ns >= subtrahend);
+
+	time->ns -= subtrahend;
 }
 
 void
@@ -85,7 +110,7 @@ nstime_get(nstime_t *time) {
 
 	nstime_init(time, ticks_100ns * 100);
 }
-#elif JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE
+#elif defined(JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE)
 #  define NSTIME_MONOTONIC true
 static void
 nstime_get(nstime_t *time) {
@@ -94,7 +119,7 @@ nstime_get(nstime_t *time) {
 	clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
 	nstime_init2(time, ts.tv_sec, ts.tv_nsec);
 }
-#elif JEMALLOC_HAVE_CLOCK_MONOTONIC
+#elif defined(JEMALLOC_HAVE_CLOCK_MONOTONIC)
 #  define NSTIME_MONOTONIC true
 static void
 nstime_get(nstime_t *time) {
@@ -103,7 +128,7 @@ nstime_get(nstime_t *time) {
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	nstime_init2(time, ts.tv_sec, ts.tv_nsec);
 }
-#elif JEMALLOC_HAVE_MACH_ABSOLUTE_TIME
+#elif defined(JEMALLOC_HAVE_MACH_ABSOLUTE_TIME)
 #  define NSTIME_MONOTONIC true
 static void
 nstime_get(nstime_t *time) {
@@ -120,27 +145,15 @@ nstime_get(nstime_t *time) {
 }
 #endif
 
-#ifdef JEMALLOC_JET
-#undef nstime_monotonic
-#define nstime_monotonic JEMALLOC_N(n_nstime_monotonic)
-#endif
-bool
-nstime_monotonic(void) {
+static bool
+nstime_monotonic_impl(void) {
 	return NSTIME_MONOTONIC;
 #undef NSTIME_MONOTONIC
 }
-#ifdef JEMALLOC_JET
-#undef nstime_monotonic
-#define nstime_monotonic JEMALLOC_N(nstime_monotonic)
-nstime_monotonic_t *nstime_monotonic = JEMALLOC_N(n_nstime_monotonic);
-#endif
+nstime_monotonic_t *JET_MUTABLE nstime_monotonic = nstime_monotonic_impl;
 
-#ifdef JEMALLOC_JET
-#undef nstime_update
-#define nstime_update JEMALLOC_N(n_nstime_update)
-#endif
-bool
-nstime_update(nstime_t *time) {
+static bool
+nstime_update_impl(nstime_t *time) {
 	nstime_t old_time;
 
 	nstime_copy(&old_time, time);
@@ -154,8 +167,4 @@ nstime_update(nstime_t *time) {
 
 	return false;
 }
-#ifdef JEMALLOC_JET
-#undef nstime_update
-#define nstime_update JEMALLOC_N(nstime_update)
-nstime_update_t *nstime_update = JEMALLOC_N(n_nstime_update);
-#endif
+nstime_update_t *JET_MUTABLE nstime_update = nstime_update_impl;
