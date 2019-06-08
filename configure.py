@@ -108,39 +108,10 @@ jemallocincludepaths = [
 	os.path.join('benchmark', 'jemalloc', 'include', 'jemalloc', 'internal')
 ]
 jemallocsources = [
-'arena.c',
-'background_thread.c',
-'base.c',
-'bin.c',
-'bitmap.c',
-'ckh.c',
-'ctl.c',
-'div.c',
-'extent.c',
-'extent_dss.c',
-'extent_mmap.c',
-'hash.c',
-'hook.c',
-'jemalloc.c',
-'large.c',
-'log.c',
-'malloc_io.c',
-'mutex.c',
-'mutex_pool.c',
-'nstime.c',
-'pages.c',
-'prng.c',
-'prof.c',
-'rtree.c',
-'safety_check.c',
-'sc.c',
-'stats.c',
-'sz.c',
-'tcache.c',
-'test_hooks.c',
-'ticker.c',
-'tsd.c',
-'witness.c'
+	'arena.c', 'background_thread.c', 'base.c', 'bin.c', 'bitmap.c', 'ckh.c', 'ctl.c', 'div.c', 'extent.c',
+	'extent_dss.c', 'extent_mmap.c', 'hash.c', 'hook.c', 'jemalloc.c', 'large.c', 'log.c', 'malloc_io.c',
+	'mutex.c', 'mutex_pool.c', 'nstime.c', 'pages.c', 'prng.c', 'prof.c', 'rtree.c', 'safety_check.c',
+	'sc.c', 'stats.c', 'sz.c', 'tcache.c', 'test_hooks.c', 'ticker.c', 'tsd.c', 'witness.c'
 ]
 jemallocsources = [os.path.join('src', path) for path in jemallocsources]
 if not target.is_windows() and not target.is_android():
