@@ -21,7 +21,9 @@
  * unallocated memory.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include "compiler.h"
 #include "ll_asm.h"

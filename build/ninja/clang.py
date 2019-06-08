@@ -415,6 +415,8 @@ class ClangToolchain(toolchain.Toolchain):
       localvariables += [('sysroot', self.android.make_sysroot_path(arch))]
     if 'defines' in variables:
       localvariables += [('cmoreflags', ['-D' + define for define in variables['defines']])]
+    if 'flags' in variables:
+      localvariables += [('cmoreflags', ['' + flag for flag in variables['flags']])]
     return localvariables
 
   def ar_variables(self, config, arch, targettype, variables):

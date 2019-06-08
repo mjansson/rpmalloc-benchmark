@@ -19,10 +19,7 @@ test_lib = generator.lib(module = 'test', sources = ['thread.c', 'timer.c'], inc
 benchmark_lib = generator.lib(module = 'benchmark', sources = ['main.c'], includepaths = includepaths)
 
 #Build one binary per benchmark
-generator.bin(module = 'rpmalloc', sources = ['benchmark.c', 'rpmalloc.c'], binname = 'benchmark-rpmalloc-unlimit', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths, variables = {'defines': ['ENABLE_UNLIMITED_CACHE=1']})
-generator.bin(module = 'rpmalloc', sources = ['benchmark.c', 'rpmalloc.c'], binname = 'benchmark-rpmalloc-size', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths, variables = {'defines': ['ENABLE_SPACE_PRIORITY_CACHE=1']})
 generator.bin(module = 'rpmalloc', sources = ['benchmark.c', 'rpmalloc.c'], binname = 'benchmark-rpmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths)
-generator.bin(module = 'rpmalloc', sources = ['benchmark.c', 'rpmalloc.c'], binname = 'benchmark-rpmalloc-nocache', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths, variables = {'defines': ['DISABLE_CACHE=1']})
 
 if target.is_android():
 	resources = [os.path.join('all', 'android', item) for item in [
@@ -154,18 +151,18 @@ if not target.is_android():
 	bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
 	generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
 
-#Requires -mrtm and CPU tsx support for full performance?
+#Requires transactional memory for full performance?
 supermallocincludepaths = [
 	os.path.join('benchmark', 'supermalloc', 'src')
 ]
 supermallocsources = [
-	'bassert.cc', 'cache.cc', 'footprint.cc', 'futex_mutex.cc', 'has_tsx.cc', 'huge_malloc.cc',
+	'bassert.cc', 'cache.cc', 'env.cc', 'footprint.cc', 'futex_mutex.cc', 'has_tsx.cc', 'huge_malloc.cc',
 	'large_malloc.cc', 'makechunk.cc', 'malloc.cc', 'rng.cc', 'small_malloc.cc', 'stats.cc',
 	'generated_constants.cc'
 ]
 supermallocsources = [os.path.join('src', path) for path in supermallocsources]
 if not target.is_android():
-	supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, variables = {'defines': ['USE_PTHREAD_MUTEXES']})
+	supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, variables = {'flags': ['-mrtm']})
 	supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
 	generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
 
@@ -174,3 +171,8 @@ if toolchain.name() == "gcc":
 	if target.is_linux():
 		generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = {'defines': ['USE_PREFIX']})
 
+fcmallocsources = [
+	'bit_index.cpp', 'fast_rand.cpp', 'hheap.cpp'
+]
+fcmalloc_depend_libs = ['benchmark', 'test']
+generator.bin(module = 'fc_malloc', sources = ['benchmark.c'] + fcmallocsources, binname = 'benchmark-fcmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = fcmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
