@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,35 +26,37 @@
 #ifndef Allocator_h
 #define Allocator_h
 
+#include "BExport.h"
 #include "BumpAllocator.h"
 #include <array>
 
 namespace bmalloc {
 
 class Deallocator;
-class DebugHeap;
 class Heap;
 
 // Per-cache object allocator.
 
 class Allocator {
 public:
-    Allocator(Heap*, Deallocator&);
+    Allocator(Heap&, Deallocator&);
     ~Allocator();
 
-    void* tryAllocate(size_t);
+    BEXPORT void* tryAllocate(size_t);
     void* allocate(size_t);
     void* tryAllocate(size_t alignment, size_t);
     void* allocate(size_t alignment, size_t);
+    void* tryReallocate(void*, size_t);
     void* reallocate(void*, size_t);
 
     void scavenge();
 
 private:
     void* allocateImpl(size_t alignment, size_t, bool crashOnFailure);
-    
+    void* reallocateImpl(void*, size_t, bool crashOnFailure);
+
     bool allocateFastCase(size_t, void*&);
-    void* allocateSlowCase(size_t);
+    BEXPORT void* allocateSlowCase(size_t);
     
     void* allocateLogSizeClass(size_t);
     void* allocateLarge(size_t);
@@ -65,7 +67,7 @@ private:
     std::array<BumpAllocator, sizeClassCount> m_bumpAllocators;
     std::array<BumpRangeCache, sizeClassCount> m_bumpRangeCaches;
 
-    DebugHeap* m_debugHeap;
+    Heap& m_heap;
     Deallocator& m_deallocator;
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2018 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,25 +24,33 @@
  */
 
 #include "DebugHeap.h"
+
+#include "Algorithm.h"
 #include "BAssert.h"
 #include "BPlatform.h"
+#include "VMAllocate.h"
 #include <cstdlib>
 #include <thread>
 
 namespace bmalloc {
+
+DebugHeap* debugHeapCache { nullptr };
     
+DEFINE_STATIC_PER_PROCESS_STORAGE(DebugHeap);
+
 #if BOS(DARWIN)
 
-DebugHeap::DebugHeap(std::lock_guard<StaticMutex>&)
+DebugHeap::DebugHeap(std::lock_guard<Mutex>&)
     : m_zone(malloc_create_zone(0, 0))
+    , m_pageSize(vmPageSize())
 {
     malloc_set_zone_name(m_zone, "WebKit Using System Malloc");
 }
 
-void* DebugHeap::malloc(size_t size)
+void* DebugHeap::malloc(size_t size, bool crashOnFailure)
 {
     void* result = malloc_zone_malloc(m_zone, size);
-    if (!result)
+    if (!result && crashOnFailure)
         BCRASH();
     return result;
 }
@@ -55,10 +63,10 @@ void* DebugHeap::memalign(size_t alignment, size_t size, bool crashOnFailure)
     return result;
 }
 
-void* DebugHeap::realloc(void* object, size_t size)
+void* DebugHeap::realloc(void* object, size_t size, bool crashOnFailure)
 {
     void* result = malloc_zone_realloc(m_zone, object, size);
-    if (!result)
+    if (!result && crashOnFailure)
         BCRASH();
     return result;
 }
@@ -68,16 +76,30 @@ void DebugHeap::free(void* object)
     malloc_zone_free(m_zone, object);
 }
 
+void DebugHeap::scavenge()
+{
+    // Currently |goal| does not affect on the behavior of malloc_zone_pressure_relief if (1) we only scavenge one zone and (2) it is not nanomalloc.
+    constexpr size_t goal = 0;
+    malloc_zone_pressure_relief(m_zone, goal);
+}
+
+void DebugHeap::dump()
+{
+    constexpr bool verbose = true;
+    malloc_zone_print(m_zone, verbose);
+}
+
 #else
 
-DebugHeap::DebugHeap(std::lock_guard<StaticMutex>&)
+DebugHeap::DebugHeap(std::lock_guard<Mutex>&)
+    : m_pageSize(vmPageSize())
 {
 }
 
-void* DebugHeap::malloc(size_t size)
+void* DebugHeap::malloc(size_t size, bool crashOnFailure)
 {
     void* result = ::malloc(size);
-    if (!result)
+    if (!result && crashOnFailure)
         BCRASH();
     return result;
 }
@@ -93,10 +115,10 @@ void* DebugHeap::memalign(size_t alignment, size_t size, bool crashOnFailure)
     return result;
 }
 
-void* DebugHeap::realloc(void* object, size_t size)
+void* DebugHeap::realloc(void* object, size_t size, bool crashOnFailure)
 {
     void* result = ::realloc(object, size);
-    if (!result)
+    if (!result && crashOnFailure)
         BCRASH();
     return result;
 }
@@ -105,7 +127,48 @@ void DebugHeap::free(void* object)
 {
     ::free(object);
 }
-    
+
+void DebugHeap::scavenge()
+{
+}
+
+void DebugHeap::dump()
+{
+}
+
 #endif
+
+// FIXME: This looks an awful lot like the code in wtf/Gigacage.cpp for large allocation.
+// https://bugs.webkit.org/show_bug.cgi?id=175086
+
+void* DebugHeap::memalignLarge(size_t alignment, size_t size)
+{
+    alignment = roundUpToMultipleOf(m_pageSize, alignment);
+    size = roundUpToMultipleOf(m_pageSize, size);
+    void* result = tryVMAllocate(alignment, size);
+    if (!result)
+        return nullptr;
+    {
+        std::lock_guard<Mutex> locker(mutex());
+        m_sizeMap[result] = size;
+    }
+    return result;
+}
+
+void DebugHeap::freeLarge(void* base)
+{
+    if (!base)
+        return;
+    
+    size_t size;
+    {
+        std::lock_guard<Mutex> locker(mutex());
+        size = m_sizeMap[base];
+        size_t numErased = m_sizeMap.erase(base);
+        RELEASE_BASSERT(numErased == 1);
+    }
+    
+    vmDeallocate(base, size);
+}
 
 } // namespace bmalloc

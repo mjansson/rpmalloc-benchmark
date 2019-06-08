@@ -139,8 +139,11 @@ bmallocincludepaths = [
 	os.path.join('benchmark', 'bmalloc', 'bmalloc')
 ]
 bmallocsources = [
-	'Allocator.cpp', 'Cache.cpp', 'Deallocator.cpp', 'DebugHeap.cpp', 'Environment.cpp', 'Heap.cpp',
-	'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'ObjectType.cpp', 'StaticMutex.cpp', 'VMHeap.cpp'
+	'AllIsoHeaps.cpp', 'Allocator.cpp', 'AvailableMemory.cpp', 'bmalloc.cpp', 'Cache.cpp', 'CryptoRandom.cpp',
+	'Deallocator.cpp', 'DebugHeap.cpp', 'Environment.cpp', 'FreeList.cpp', 'Gigacage.cpp', 'Heap.cpp',
+	'HeapKind.cpp', 'IsoHeapImpl.cpp', 'IsoPage.cpp', 'IsoSharedHeap.cpp', 'IsoSharedPage.cpp', 'IsoTLS.cpp',
+	'IsoTLSEntry.cpp', 'IsoTLSLayout.cpp', 'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'Mutex.cpp',
+	'ObjectType.cpp', 'PerProcess.cpp', 'PerThread.cpp', 'Scavenger.cpp', 'StaticMutex.cpp', 'VMHeap.cpp'
 ]
 if target.is_macos() or target.is_ios():
 	bmallocsources += ['Zone.cpp']
