@@ -259,8 +259,12 @@ class GCCToolchain(toolchain.Toolchain):
     cconfigflags = self.make_cconfigflags(config, targettype)
     if cconfigflags != []:
       localvariables += [('cconfigflags', cconfigflags)]
+    cmoreflags = []
     if 'defines' in variables:
-      localvariables += [('cmoreflags', ['-D' + define for define in variables['defines']])]
+      cmoreflags += ['-D' + define for define in variables['defines']]
+    if 'cflags' in variables:
+      cmoreflags += ['' + flag for flag in variables['cflags']]
+    localvariables += [('cmoreflags', cmoreflags)]
     return localvariables
 
   def ar_variables(self, config, arch, targettype, variables):

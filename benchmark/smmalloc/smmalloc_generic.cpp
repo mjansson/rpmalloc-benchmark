@@ -51,19 +51,20 @@ void* sm::GenericAllocator::Alloc(sm::GenericAllocator::TInstance instance, size
 	{
 		alignment = 16;
 	}
-	return _aligned_malloc(bytesCount, alignment);
+	return aligned_alloc(bytesCount, alignment);
 }
 
 void sm::GenericAllocator::Free(sm::GenericAllocator::TInstance instance, void* p)
 {
 	SMMALLOC_UNUSED(instance);
-	_aligned_free(p);
+	free(p);
 }
 
 void* sm::GenericAllocator::Realloc(sm::GenericAllocator::TInstance instance, void* p, size_t bytesCount, size_t alignment)
 {
 	SMMALLOC_UNUSED(instance);
-	return _aligned_realloc(p, bytesCount, alignment);
+	//return aligned_realloc(p, bytesCount, alignment);
+	return realloc(p, bytesCount);
 }
 
 size_t sm::GenericAllocator::GetUsableSpace(sm::GenericAllocator::TInstance instance, void* p)
@@ -74,7 +75,7 @@ size_t sm::GenericAllocator::GetUsableSpace(sm::GenericAllocator::TInstance inst
 		if (alignment < sizeof(void*))
 			alignment = sizeof(void*);
 
-		return _msize(p) - alignment - sizeof(void*);
+		return malloc_usable_size(p) - alignment - sizeof(void*);
 	#else
 		return _aligned_msize(p, alignment, 0);
 	#endif

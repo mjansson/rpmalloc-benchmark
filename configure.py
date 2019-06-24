@@ -14,12 +14,18 @@ target = generator.target
 writer = generator.writer
 toolchain = generator.toolchain
 
+variables = {'defines': ['NDEBUG=1'], 'cflags': ['-fno-builtin-malloc']}
+
+def merge_variables(a, b):
+    return dict(a.items() + b.items() +
+        [(k, a[k] + b[k]) for k in set(b) & set(a)])
+
 includepaths = ['test', 'benchmark']
-test_lib = generator.lib(module = 'test', sources = ['thread.c', 'timer.c'], includepaths = includepaths)
-benchmark_lib = generator.lib(module = 'benchmark', sources = ['main.c'], includepaths = includepaths)
+test_lib = generator.lib(module = 'test', sources = ['thread.c', 'timer.c'], includepaths = includepaths, variables = variables)
+benchmark_lib = generator.lib(module = 'benchmark', sources = ['main.c'], includepaths = includepaths, variables = variables)
 
 #Build one binary per benchmark
-generator.bin(module = 'rpmalloc', sources = ['benchmark.c', 'rpmalloc.c'], binname = 'benchmark-rpmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths)
+generator.bin(module = 'rpmalloc', sources = ['benchmark.c', 'rpmalloc.c'], binname = 'benchmark-rpmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths, variables = variables)
 
 if target.is_android():
 	resources = [os.path.join('all', 'android', item) for item in [
@@ -30,12 +36,11 @@ if target.is_android():
 	appsources = [os.path.join('test', 'all', 'android', 'java', 'com', 'rampantpixels', 'foundation', 'test', item) for item in [
 		'TestActivity.java'
 	]]
-	variables = {}
 	generator.app(module = '', sources = appsources, binname = 'benchmark-rpmalloc', basepath = '', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], resources = resources, includepaths = includepaths, variables = variables)
 
-generator.bin(module = 'crt', sources = ['benchmark.c'], binname = 'benchmark-crt', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths)
+generator.bin(module = 'crt', sources = ['benchmark.c'], binname = 'benchmark-crt', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths, variables = {'defines': ['NDEBUG=1']})
 if not target.is_android():
-	generator.bin(module = 'nedmalloc', sources = ['benchmark.c', 'nedmalloc.c'], binname = 'benchmark-nedmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths)
+	generator.bin(module = 'nedmalloc', sources = ['benchmark.c', 'nedmalloc.c'], binname = 'benchmark-nedmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths, variables = variables)
 
 platform_includepaths = [os.path.join('benchmark', 'ptmalloc3')]
 if target.is_windows():
@@ -43,7 +48,7 @@ if target.is_windows():
 else:
 	platform_includepaths += [os.path.join('benchmark', 'ptmalloc3', 'sysdeps', 'pthread')]
 if not target.is_android():
-	generator.bin(module = 'ptmalloc3', sources = ['benchmark.c', 'ptmalloc3.c', 'malloc.c'], binname = 'benchmark-ptmalloc3', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths + platform_includepaths)
+	generator.bin(module = 'ptmalloc3', sources = ['benchmark.c', 'ptmalloc3.c', 'malloc.c'], binname = 'benchmark-ptmalloc3', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = ['benchmark', 'test'], includepaths = includepaths + platform_includepaths, variables = variables)
 
 hoardincludepaths = [
 	os.path.join('benchmark', 'hoard', 'include'),
@@ -67,9 +72,10 @@ elif target.is_windows():
 else:
 	hoardsources += ['source/unixtls.cpp']
 if not target.is_android():
-	hoard_lib = generator.lib(module = 'hoard', sources = hoardsources, basepath = 'benchmark', includepaths = includepaths + hoardincludepaths)
+	hoard_variables = merge_variables({'runtime': 'c++'}, variables)
+	hoard_lib = generator.lib(module = 'hoard', sources = hoardsources, basepath = 'benchmark', includepaths = includepaths + hoardincludepaths, variables = hoard_variables)
 	hoard_depend_libs = ['hoard', 'benchmark', 'test']
-	generator.bin(module = 'hoard', sources = ['benchmark.c'], binname = 'benchmark-hoard', basepath = 'benchmark', implicit_deps = [hoard_lib, benchmark_lib, test_lib], libs = hoard_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	generator.bin(module = 'hoard', sources = ['benchmark.c'], binname = 'benchmark-hoard', basepath = 'benchmark', implicit_deps = [hoard_lib, benchmark_lib, test_lib], libs = hoard_depend_libs, includepaths = includepaths, variables = hoard_variables)
 
 gperftoolsincludepaths = [
 	os.path.join('benchmark', 'gperftools', 'src'),
@@ -95,9 +101,10 @@ if target.is_windows():
 	gperftoolssources += [os.path.join('windows', 'port.cc'), os.path.join('windows', 'system-alloc.cc')]
 gperftoolssources = [os.path.join('src', path) for path in gperftoolssources]
 if not target.is_android():
-	gperftools_lib = generator.lib(module = 'gperftools', sources = gperftoolsbasesources + gperftoolssources, basepath = 'benchmark', includepaths = includepaths + gperftoolsincludepaths, variables = {'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK']})
+	gperf_variables = merge_variables({'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK']}, variables)
+	gperftools_lib = generator.lib(module = 'gperftools', sources = gperftoolsbasesources + gperftoolssources, basepath = 'benchmark', includepaths = includepaths + gperftoolsincludepaths, variables = gperf_variables)
 	gperftools_depend_libs = ['gperftools', 'benchmark', 'test']
-	generator.bin(module = 'gperftools', sources = ['benchmark.c'], binname = 'benchmark-tcmalloc', basepath = 'benchmark', implicit_deps = [gperftools_lib, benchmark_lib, test_lib], libs = gperftools_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK']})
+	generator.bin(module = 'gperftools', sources = ['benchmark.c'], binname = 'benchmark-tcmalloc', basepath = 'benchmark', implicit_deps = [gperftools_lib, benchmark_lib, test_lib], libs = gperftools_depend_libs, includepaths = includepaths, variables = gperf_variables)
 
 jemallocincludepaths = [
 	os.path.join('benchmark', 'jemalloc', 'include'),
@@ -112,9 +119,10 @@ jemallocsources = [
 ]
 jemallocsources = [os.path.join('src', path) for path in jemallocsources]
 if not target.is_windows() and not target.is_android():
-	jemalloc_lib = generator.lib(module = 'jemalloc', sources = jemallocsources, basepath = 'benchmark', includepaths = includepaths + jemallocincludepaths, variables = {'defines': ['JEMALLOC_NO_RENAME']})
+	je_variables = merge_variables({'defines': ['JEMALLOC_NO_RENAME']}, variables)
+	jemalloc_lib = generator.lib(module = 'jemalloc', sources = jemallocsources, basepath = 'benchmark', includepaths = includepaths + jemallocincludepaths, variables = je_variables)
 	jemalloc_depend_libs = ['jemalloc', 'benchmark', 'test']
-	generator.bin(module = 'jemalloc', sources = ['benchmark.c'], binname = 'benchmark-jemalloc', basepath = 'benchmark', implicit_deps = [jemalloc_lib, benchmark_lib, test_lib], libs = jemalloc_depend_libs, includepaths = includepaths)
+	generator.bin(module = 'jemalloc', sources = ['benchmark.c'], binname = 'benchmark-jemalloc', basepath = 'benchmark', implicit_deps = [jemalloc_lib, benchmark_lib, test_lib], libs = jemalloc_depend_libs, includepaths = includepaths, variables = je_variables)
 
 scallocincludepaths = [
 	os.path.join('benchmark', 'scalloc', 'src'),
@@ -125,13 +133,15 @@ scallocsources = [
 ]
 scallocsources = [os.path.join('src', path) for path in scallocsources]
 if not target.is_windows() and not target.is_android():
-	scalloc_lib = generator.lib(module = 'scalloc', sources = scallocsources, basepath = 'benchmark', includepaths = includepaths + scallocincludepaths)
+	scalloc_variables = merge_variables({'runtime': 'c++'}, variables)
+	scalloc_lib = generator.lib(module = 'scalloc', sources = scallocsources, basepath = 'benchmark', includepaths = includepaths + scallocincludepaths, variables = scalloc_variables)
 	scalloc_depend_libs = ['scalloc', 'benchmark', 'test']
-	generator.bin(module = 'scalloc', sources = ['benchmark.c'], binname = 'benchmark-scalloc', basepath = 'benchmark', implicit_deps = [scalloc_lib, benchmark_lib, test_lib], libs = scalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	generator.bin(module = 'scalloc', sources = ['benchmark.c'], binname = 'benchmark-scalloc', basepath = 'benchmark', implicit_deps = [scalloc_lib, benchmark_lib, test_lib], libs = scalloc_depend_libs, includepaths = includepaths, variables = scalloc_variables)
 
 lockfree_malloc_depend_libs = ['benchmark', 'test']
 if not target.is_android():
-	generator.bin(module = 'lockfree-malloc', sources = ['benchmark.c', 'lite-malloc.cpp'], binname = 'benchmark-lockfree-malloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockfree_malloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	lockfree_variables = merge_variables({'runtime': 'c++'}, variables)
+	generator.bin(module = 'lockfree-malloc', sources = ['benchmark.c', 'lite-malloc.cpp'], binname = 'benchmark-lockfree-malloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockfree_malloc_depend_libs, includepaths = includepaths, variables = lockfree_variables)
 
 bmallocincludepaths = [
 	os.path.join('benchmark', 'bmalloc', 'bmalloc')
@@ -147,9 +157,10 @@ if target.is_macos() or target.is_ios():
 	bmallocsources += ['Zone.cpp']
 bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
 if not target.is_android():
-	bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths)
+	bmalloc_variables = merge_variables({'runtime': 'c++'}, variables)
+	bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, variables = bmalloc_variables)
 	bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
-	generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = bmalloc_variables)
 
 #Requires transactional memory for full performance?
 supermallocincludepaths = [
@@ -162,18 +173,21 @@ supermallocsources = [
 ]
 supermallocsources = [os.path.join('src', path) for path in supermallocsources]
 if not target.is_android():
-	supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, variables = {'flags': ['-mrtm']})
+	supermalloc_variables = {'cflags': ['-mrtm'], 'runtime': 'c++', 'defines': ['NDEBUG=1']}
+	supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, variables = supermalloc_variables)
 	supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
-	generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+	generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = supermalloc_variables)
 
 if toolchain.name() == "gcc":
 	lockless_depend_libs = ['benchmark', 'test']
 	if target.is_linux():
-		generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = {'defines': ['USE_PREFIX']})
+		lockless_variables = merge_variables({'defines': ['USE_PREFIX']}, variables)
+		generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = lockless_variables)
 
 #smmalloc does not seem to compile on x64
-#smmallocsources = [
-#	'smmalloc.cpp', 'smmalloc_tls.cpp'
-#]
-#smmalloc_depend_libs = ['benchmark', 'test']
-#generator.bin(module = 'smmalloc', sources = ['benchmark.c'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = {'runtime': 'c++'})
+smmallocsources = [
+	'smmalloc.cpp', 'smmalloc_generic.cpp', 'smmalloc_tls.cpp'
+]
+smmalloc_variables = {'defines': ['_M_X64=1'], 'runtime': 'c++'}
+smmalloc_depend_libs = ['benchmark', 'test']
+generator.bin(module = 'smmalloc', sources = ['benchmark.cpp'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = smmalloc_variables)

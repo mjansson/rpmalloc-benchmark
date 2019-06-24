@@ -8,6 +8,10 @@
 #  define FORCENOINLINE __attribute__((__noinline__))
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 extern FORCENOINLINE int
 benchmark_initialize(void);
 
@@ -33,3 +37,7 @@ extern FORCENOINLINE const char*
 benchmark_name(void);
 
 #undef FORCENOINLINE
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,11 +1,8 @@
 
+#include "smmalloc.h"
 #include <benchmark.h>
 
-#include "smmalloc.h"
-
 static sm_allocator allocator;
-
-extern "C" {
 
 int
 benchmark_initialize() {
@@ -46,6 +43,4 @@ benchmark_free(void* ptr) {
 const char*
 benchmark_name(void) {
 	return "smmalloc";
-}
-
 }
