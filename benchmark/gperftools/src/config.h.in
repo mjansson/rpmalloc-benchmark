@@ -5,20 +5,32 @@
 #define GPERFTOOLS_CONFIG_H_
 
 
+/* enable aggressive decommit by default */
+#undef ENABLE_AGGRESSIVE_DECOMMIT_BY_DEFAULT
+
+/* Build new/delete operators for overaligned types */
+#undef ENABLE_ALIGNED_NEW_DELETE
+
 /* Build runtime detection for sized delete */
 #undef ENABLE_DYNAMIC_SIZED_DELETE
+
+/* report large allocation */
+#undef ENABLE_LARGE_ALLOC_REPORT
 
 /* Build sized deletion operators */
 #undef ENABLE_SIZED_DELETE
 
-/* Define to 1 if compiler supports __builtin_expect */
-#undef HAVE_BUILTIN_EXPECT
+/* Define to 1 if you have the <asm/ptrace.h> header file. */
+#undef HAVE_ASM_PTRACE_H
 
 /* Define to 1 if compiler supports __builtin_stack_pointer */
 #undef HAVE_BUILTIN_STACK_POINTER
 
 /* Define to 1 if you have the <conflict-signal.h> header file. */
 #undef HAVE_CONFLICT_SIGNAL_H
+
+/* define if the compiler supports basic C++11 syntax */
+#undef HAVE_CXX11
 
 /* Define to 1 if you have the <cygwin/signal.h> header file. */
 #undef HAVE_CYGWIN_SIGNAL_H
@@ -79,9 +91,6 @@
 
 /* Define to 1 if you have the `geteuid' function. */
 #undef HAVE_GETEUID
-
-/* Define to 1 if you have the `getpagesize' function. */
-#undef HAVE_GETPAGESIZE
 
 /* Define to 1 if you have the <glob.h> header file. */
 #undef HAVE_GLOB_H
@@ -153,9 +162,6 @@
 /* Define to 1 if you have the <sys/cdefs.h> header file. */
 #undef HAVE_SYS_CDEFS_H
 
-/* Define to 1 if you have the <sys/param.h> header file. */
-#undef HAVE_SYS_PARAM_H
-
 /* Define to 1 if you have the <sys/prctl.h> header file. */
 #undef HAVE_SYS_PRCTL_H
 
@@ -201,11 +207,17 @@
 /* define if your compiler has __attribute__ */
 #undef HAVE___ATTRIBUTE__
 
+/* define if your compiler supports alignment of functions */
+#undef HAVE___ATTRIBUTE__ALIGNED_FN
+
 /* Define to 1 if compiler supports __environ */
 #undef HAVE___ENVIRON
 
 /* Define to 1 if the system has the type `__int64'. */
 #undef HAVE___INT64
+
+/* Define to 1 if you have the `__sbrk' function. */
+#undef HAVE___SBRK
 
 /* prefix where we look for installed files */
 #undef INSTALL_PREFIX

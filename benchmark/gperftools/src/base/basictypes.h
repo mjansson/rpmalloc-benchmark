@@ -117,6 +117,14 @@ const  int64 kint64min =  ( (((uint64) kint32min) << 32) | 0 );
 #define PRINTABLE_PTHREAD(pthreadt) pthreadt
 #endif
 
+#if defined(__GNUC__)
+#define PREDICT_TRUE(x) __builtin_expect(!!(x), 1)
+#define PREDICT_FALSE(x) __builtin_expect(!!(x), 0)
+#else
+#define PREDICT_TRUE(x) (x)
+#define PREDICT_FALSE(x) (x)
+#endif
+
 // A macro to disallow the evil copy constructor and operator= functions
 // This should be used in the private: declarations for a class
 #define DISALLOW_EVIL_CONSTRUCTORS(TypeName)    \
@@ -273,7 +281,7 @@ inline void bit_store(Dest *dest, const Source *source) {
 //    ATTRIBUTE_SECTION are guaranteed to be between START and STOP.
 
 #if defined(HAVE___ATTRIBUTE__) && defined(__ELF__)
-# define ATTRIBUTE_SECTION(name) __attribute__ ((section (#name)))
+# define ATTRIBUTE_SECTION(name) __attribute__ ((section (#name))) __attribute__((noinline))
 
   // Weak section declaration to be used as a global declaration
   // for ATTRIBUTE_SECTION_START|STOP(name) to compile and link
@@ -380,7 +388,13 @@ class AssignAttributeStartEnd {
 # endif
 #else
 # define CACHELINE_ALIGNED
-#endif  // defined(HAVE___ATTRIBUTE__) && (__i386__ || __x86_64__)
+#endif  // defined(HAVE___ATTRIBUTE__)
+
+#if defined(HAVE___ATTRIBUTE__ALIGNED_FN)
+#  define CACHELINE_ALIGNED_FN CACHELINE_ALIGNED
+#else
+#  define CACHELINE_ALIGNED_FN
+#endif
 
 // Structure for discovering alignment
 union MemoryAligner {
@@ -388,6 +402,20 @@ union MemoryAligner {
   double d;
   size_t s;
 } CACHELINE_ALIGNED;
+
+#if defined(HAVE___ATTRIBUTE__) && defined(__ELF__)
+#define ATTRIBUTE_HIDDEN __attribute__((visibility("hidden")))
+#else
+#define ATTRIBUTE_HIDDEN
+#endif
+
+#if defined(__GNUC__)
+#define ATTRIBUTE_ALWAYS_INLINE __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define ATTRIBUTE_ALWAYS_INLINE __forceinline
+#else
+#define ATTRIBUTE_ALWAYS_INLINE
+#endif
 
 // The following enum should be used only as a constructor argument to indicate
 // that the variable has static storage class, and that the constructor should

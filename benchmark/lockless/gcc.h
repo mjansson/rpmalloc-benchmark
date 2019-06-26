@@ -18,7 +18,9 @@
 /* Coompiler specific details - gcc */
 #ifndef LL_GCC_H
 #define LL_GCC_H
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 #include <pthread.h>
 
 #define __thread__ __thread __attribute__ ((tls_model ("initial-exec"))) 

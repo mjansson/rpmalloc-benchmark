@@ -61,7 +61,11 @@
 
 #ifdef HAVE_ELF_MEM_IMAGE
 
+// Enable VDSO support only for the architectures/operating systems that
+// support it.
+#if defined(__linux__) && (defined(__i386__) || defined(__PPC__))
 #define HAVE_VDSO_SUPPORT 1
+#endif
 
 #include <stdlib.h>     // for NULL
 

@@ -2,7 +2,16 @@
 #include <new>
 
 #define JEMALLOC_CPP_CPP_
-#include "jemalloc/internal/jemalloc_internal.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "jemalloc/internal/jemalloc_preamble.h"
+#include "jemalloc/internal/jemalloc_internal_includes.h"
+
+#ifdef __cplusplus
+}
+#endif
 
 // All operators in this file are exported.
 
@@ -30,13 +39,10 @@ void	operator delete(void *ptr, std::size_t size) noexcept;
 void	operator delete[](void *ptr, std::size_t size) noexcept;
 #endif
 
-template <bool IsNoExcept>
-JEMALLOC_INLINE
-void *
-newImpl(std::size_t size) noexcept(IsNoExcept) {
-	void *ptr = je_malloc(size);
-	if (likely(ptr != nullptr))
-		return ptr;
+JEMALLOC_NOINLINE
+static void *
+handleOOM(std::size_t size, bool nothrow) {
+	void *ptr = nullptr;
 
 	while (ptr == nullptr) {
 		std::new_handler handler;
@@ -60,9 +66,20 @@ newImpl(std::size_t size) noexcept(IsNoExcept) {
 		ptr = je_malloc(size);
 	}
 
-	if (ptr == nullptr && !IsNoExcept)
+	if (ptr == nullptr && !nothrow)
 		std::__throw_bad_alloc();
 	return ptr;
+}
+
+template <bool IsNoExcept>
+JEMALLOC_ALWAYS_INLINE
+void *
+newImpl(std::size_t size) noexcept(IsNoExcept) {
+	void *ptr = je_malloc(size);
+	if (likely(ptr != nullptr))
+		return ptr;
+
+	return handleOOM(size, IsNoExcept);
 }
 
 void *
@@ -111,14 +128,14 @@ operator delete(void *ptr, std::size_t size) noexcept {
 	if (unlikely(ptr == nullptr)) {
 		return;
 	}
-	je_sdallocx(ptr, size, /*flags=*/0);
+	je_sdallocx_noflags(ptr, size);
 }
 
 void operator delete[](void *ptr, std::size_t size) noexcept {
 	if (unlikely(ptr == nullptr)) {
 		return;
 	}
-	je_sdallocx(ptr, size, /*flags=*/0);
+	je_sdallocx_noflags(ptr, size);
 }
 
 #endif  // __cpp_sized_deallocation

@@ -44,14 +44,14 @@ namespace tcmalloc {
 // thread and central caches.
 static int32 FLAGS_tcmalloc_transfer_num_objects;
 
-static const int32 kDefaultTransferNumObjecs = 512;
+static const int32 kDefaultTransferNumObjecs = 32;
 
 // The init function is provided to explicit initialize the variable value
 // from the env. var to avoid C++ global construction that might defer its
 // initialization after a malloc/new call.
 static inline void InitTCMallocTransferNumObjects()
 {
-  if (UNLIKELY(FLAGS_tcmalloc_transfer_num_objects == 0)) {
+  if (FLAGS_tcmalloc_transfer_num_objects == 0) {
     const char *envval = TCMallocGetenvSafe("TCMALLOC_TRANSFER_NUM_OBJ");
     FLAGS_tcmalloc_transfer_num_objects = !envval ? kDefaultTransferNumObjecs :
       strtol(envval, NULL, 10);
@@ -173,14 +173,15 @@ void SizeMap::Init() {
     class_to_size_[sc] = size;
     sc++;
   }
-  if (sc != kNumClasses) {
+  num_size_classes = sc;
+  if (sc > kClassSizesMax) {
     Log(kCrash, __FILE__, __LINE__,
-        "wrong number of size classes: (found vs. expected )", sc, kNumClasses);
+        "too many size classes: (found vs. max)", sc, kClassSizesMax);
   }
 
   // Initialize the mapping arrays
   int next_size = 0;
-  for (int c = 1; c < kNumClasses; c++) {
+  for (int c = 1; c < num_size_classes; c++) {
     const int max_size_in_class = class_to_size_[c];
     for (int s = next_size; s <= max_size_in_class; s += kAlignment) {
       class_array_[ClassIndex(s)] = c;
@@ -191,7 +192,7 @@ void SizeMap::Init() {
   // Double-check sizes just to be safe
   for (size_t size = 0; size <= kMaxSize;) {
     const int sc = SizeClass(size);
-    if (sc <= 0 || sc >= kNumClasses) {
+    if (sc <= 0 || sc >= num_size_classes) {
       Log(kCrash, __FILE__, __LINE__,
           "Bad size class (class, size)", sc, size);
     }
@@ -211,8 +212,23 @@ void SizeMap::Init() {
     }
   }
 
+  // Our fast-path aligned allocation functions rely on 'naturally
+  // aligned' sizes to produce aligned addresses. Lets check if that
+  // holds for size classes that we produced.
+  //
+  // I.e. we're checking that
+  //
+  // align = (1 << shift), malloc(i * align) % align == 0,
+  //
+  // for all align values up to kPageSize.
+  for (size_t align = kMinAlign; align <= kPageSize; align <<= 1) {
+    for (size_t size = align; size < kPageSize; size += align) {
+      CHECK_CONDITION(class_to_size_[SizeClass(size)] % align == 0);
+    }
+  }
+
   // Initialize the num_objects_to_move array.
-  for (size_t cl = 1; cl  < kNumClasses; ++cl) {
+  for (size_t cl = 1; cl  < num_size_classes; ++cl) {
     num_objects_to_move_[cl] = NumMoveSize(ByteSizeForClass(cl));
   }
 }

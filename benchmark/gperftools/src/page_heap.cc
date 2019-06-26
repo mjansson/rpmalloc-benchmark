@@ -64,14 +64,11 @@ namespace tcmalloc {
 
 PageHeap::PageHeap()
     : pagemap_(MetaDataAlloc),
-      pagemap_cache_(0),
       scavenge_counter_(0),
       // Start scavenging at kMaxPages list
       release_index_(kMaxPages),
       aggressive_decommit_(false) {
-  COMPILE_ASSERT(kNumClasses <= (1 << PageMapCache::kValuebits), valuebits);
-  DLL_Init(&large_.normal);
-  DLL_Init(&large_.returned);
+  COMPILE_ASSERT(kClassSizesMax <= (1 << PageMapCache::kValuebits), valuebits);
   for (int i = 0; i < kMaxPages; i++) {
     DLL_Init(&free_[i].normal);
     DLL_Init(&free_[i].returned);
@@ -83,15 +80,15 @@ Span* PageHeap::SearchFreeAndLargeLists(Length n) {
   ASSERT(n > 0);
 
   // Find first size >= n that has a non-empty list
-  for (Length s = n; s < kMaxPages; s++) {
-    Span* ll = &free_[s].normal;
+  for (Length s = n; s <= kMaxPages; s++) {
+    Span* ll = &free_[s - 1].normal;
     // If we're lucky, ll is non-empty, meaning it has a suitable span.
     if (!DLL_IsEmpty(ll)) {
       ASSERT(ll->next->location == Span::ON_NORMAL_FREELIST);
       return Carve(ll->next, n);
     }
     // Alternatively, maybe there's a usable returned span.
-    ll = &free_[s].returned;
+    ll = &free_[s - 1].returned;
     if (!DLL_IsEmpty(ll)) {
       // We did not call EnsureLimit before, to avoid releasing the span
       // that will be taken immediately back.
@@ -169,45 +166,38 @@ Span* PageHeap::New(Length n) {
 }
 
 Span* PageHeap::AllocLarge(Length n) {
-  // find the best span (closest to n in size).
-  // The following loops implements address-ordered best-fit.
   Span *best = NULL;
+  Span *best_normal = NULL;
 
-  // Search through normal list
-  for (Span* span = large_.normal.next;
-       span != &large_.normal;
-       span = span->next) {
-    if (span->length >= n) {
-      if ((best == NULL)
-          || (span->length < best->length)
-          || ((span->length == best->length) && (span->start < best->start))) {
-        best = span;
-        ASSERT(best->location == Span::ON_NORMAL_FREELIST);
-      }
-    }
+  // Create a Span to use as an upper bound.
+  Span bound;
+  bound.start = 0;
+  bound.length = n;
+
+  // First search the NORMAL spans..
+  SpanSet::iterator place = large_normal_.upper_bound(SpanPtrWithLength(&bound));
+  if (place != large_normal_.end()) {
+    best = place->span;
+    best_normal = best;
+    ASSERT(best->location == Span::ON_NORMAL_FREELIST);
   }
 
-  Span *bestNormal = best;
-
-  // Search through released list in case it has a better fit
-  for (Span* span = large_.returned.next;
-       span != &large_.returned;
-       span = span->next) {
-    if (span->length >= n) {
-      if ((best == NULL)
-          || (span->length < best->length)
-          || ((span->length == best->length) && (span->start < best->start))) {
-        best = span;
-        ASSERT(best->location == Span::ON_RETURNED_FREELIST);
-      }
-    }
+  // Try to find better fit from RETURNED spans.
+  place = large_returned_.upper_bound(SpanPtrWithLength(&bound));
+  if (place != large_returned_.end()) {
+    Span *c = place->span;
+    ASSERT(c->location == Span::ON_RETURNED_FREELIST);
+    if (best_normal == NULL
+        || c->length < best->length
+        || (c->length == best->length && c->start < best->start))
+      best = place->span;
   }
 
-  if (best == bestNormal) {
+  if (best == best_normal) {
     return best == NULL ? NULL : Carve(best, n);
   }
 
-  // best comes from returned list.
+  // best comes from RETURNED set.
 
   if (EnsureLimit(n, false)) {
     return Carve(best, n);
@@ -215,13 +205,13 @@ Span* PageHeap::AllocLarge(Length n) {
 
   if (EnsureLimit(n, true)) {
     // best could have been destroyed by coalescing.
-    // bestNormal is not a best-fit, and it could be destroyed as well.
+    // best_normal is not a best-fit, and it could be destroyed as well.
     // We retry, the limit is already ensured:
     return AllocLarge(n);
   }
 
-  // If bestNormal existed, EnsureLimit would succeeded:
-  ASSERT(bestNormal == NULL);
+  // If best_normal existed, EnsureLimit would succeeded:
+  ASSERT(best_normal == NULL);
   // We are not allowed to take best from returned list.
   return NULL;
 }
@@ -245,16 +235,22 @@ Span* PageHeap::Split(Span* span, Length n) {
 }
 
 void PageHeap::CommitSpan(Span* span) {
+  ++stats_.commit_count;
+
   TCMalloc_SystemCommit(reinterpret_cast<void*>(span->start << kPageShift),
                         static_cast<size_t>(span->length << kPageShift));
   stats_.committed_bytes += span->length << kPageShift;
+  stats_.total_commit_bytes += (span->length << kPageShift);
 }
 
 bool PageHeap::DecommitSpan(Span* span) {
+  ++stats_.decommit_count;
+
   bool rv = TCMalloc_SystemRelease(reinterpret_cast<void*>(span->start << kPageShift),
                                    static_cast<size_t>(span->length << kPageShift));
   if (rv) {
     stats_.committed_bytes -= span->length << kPageShift;
+    stats_.total_decommit_bytes += (span->length << kPageShift);
   }
 
   return rv;
@@ -320,11 +316,29 @@ void PageHeap::Delete(Span* span) {
   ASSERT(Check());
 }
 
-bool PageHeap::MayMergeSpans(Span *span, Span *other) {
-  if (aggressive_decommit_) {
-    return other->location != Span::IN_USE;
+// Given span we're about to free and other span (still on free list),
+// checks if 'other' span is mergable with 'span'. If it is, removes
+// other span from free list, performs aggressive decommit if
+// necessary and returns 'other' span. Otherwise 'other' span cannot
+// be merged and is left untouched. In that case NULL is returned.
+Span* PageHeap::CheckAndHandlePreMerge(Span* span, Span* other) {
+  if (other == NULL) {
+    return other;
   }
-  return span->location == other->location;
+  // if we're in aggressive decommit mode and span is decommitted,
+  // then we try to decommit adjacent span.
+  if (aggressive_decommit_ && other->location == Span::ON_NORMAL_FREELIST
+      && span->location == Span::ON_RETURNED_FREELIST) {
+    bool worked = DecommitSpan(other);
+    if (!worked) {
+      return NULL;
+    }
+  } else if (other->location != span->location) {
+    return NULL;
+  }
+
+  RemoveFromFreeList(other);
+  return other;
 }
 
 void PageHeap::MergeIntoFreeList(Span* span) {
@@ -340,15 +354,6 @@ void PageHeap::MergeIntoFreeList(Span* span) {
   //
   // The following applies if aggressive_decommit_ is enabled:
   //
-  // Note that the adjacent spans we merge into "span" may come out of a
-  // "normal" (committed) list, and cleanly merge with our IN_USE span, which
-  // is implicitly committed.  If the adjacents spans are on the "returned"
-  // (decommitted) list, then we must get both spans into the same state before
-  // or after we coalesce them.  The current code always decomits. This is
-  // achieved by blindly decommitting the entire coalesced region, which  may
-  // include any combination of committed and decommitted spans, at the end of
-  // the method.
-
   // TODO(jar): "Always decommit" causes some extra calls to commit when we are
   // called in GrowHeap() during an allocation :-/.  We need to eval the cost of
   // that oscillation, and possibly do something to reduce it.
@@ -356,65 +361,62 @@ void PageHeap::MergeIntoFreeList(Span* span) {
   // TODO(jar): We need a better strategy for deciding to commit, or decommit,
   // based on memory usage and free heap sizes.
 
-  uint64_t temp_committed = 0;
-
   const PageID p = span->start;
   const Length n = span->length;
-  Span* prev = GetDescriptor(p-1);
-  if (prev != NULL && MayMergeSpans(span, prev)) {
+
+  if (aggressive_decommit_ && span->location == Span::ON_NORMAL_FREELIST) {
+    if (DecommitSpan(span)) {
+      span->location = Span::ON_RETURNED_FREELIST;
+    }
+  }
+
+  Span* prev = CheckAndHandlePreMerge(span, GetDescriptor(p-1));
+  if (prev != NULL) {
     // Merge preceding span into this span
     ASSERT(prev->start + prev->length == p);
     const Length len = prev->length;
-    if (aggressive_decommit_ && prev->location == Span::ON_RETURNED_FREELIST) {
-      // We're about to put the merge span into the returned freelist and call
-      // DecommitSpan() on it, which will mark the entire span including this
-      // one as released and decrease stats_.committed_bytes by the size of the
-      // merged span.  To make the math work out we temporarily increase the
-      // stats_.committed_bytes amount.
-      temp_committed = prev->length << kPageShift;
-    }
-    RemoveFromFreeList(prev);
     DeleteSpan(prev);
     span->start -= len;
     span->length += len;
     pagemap_.set(span->start, span);
     Event(span, 'L', len);
   }
-  Span* next = GetDescriptor(p+n);
-  if (next != NULL && MayMergeSpans(span, next)) {
+  Span* next = CheckAndHandlePreMerge(span, GetDescriptor(p+n));
+  if (next != NULL) {
     // Merge next span into this span
     ASSERT(next->start == p+n);
     const Length len = next->length;
-    if (aggressive_decommit_ && next->location == Span::ON_RETURNED_FREELIST) {
-      // See the comment below 'if (prev->location ...' for explanation.
-      temp_committed += next->length << kPageShift;
-    }
-    RemoveFromFreeList(next);
     DeleteSpan(next);
     span->length += len;
     pagemap_.set(span->start + span->length - 1, span);
     Event(span, 'R', len);
   }
 
-  if (aggressive_decommit_) {
-    if (DecommitSpan(span)) {
-      span->location = Span::ON_RETURNED_FREELIST;
-      stats_.committed_bytes += temp_committed;
-    } else {
-      ASSERT(temp_committed == 0);
-    }
-  }
   PrependToFreeList(span);
 }
 
 void PageHeap::PrependToFreeList(Span* span) {
   ASSERT(span->location != Span::IN_USE);
-  SpanList* list = (span->length < kMaxPages) ? &free_[span->length] : &large_;
-  if (span->location == Span::ON_NORMAL_FREELIST) {
+  if (span->location == Span::ON_NORMAL_FREELIST)
     stats_.free_bytes += (span->length << kPageShift);
+  else
+    stats_.unmapped_bytes += (span->length << kPageShift);
+
+  if (span->length > kMaxPages) {
+    SpanSet *set = &large_normal_;
+    if (span->location == Span::ON_RETURNED_FREELIST)
+      set = &large_returned_;
+    std::pair<SpanSet::iterator, bool> p =
+        set->insert(SpanPtrWithLength(span));
+    ASSERT(p.second); // We never have duplicates since span->start is unique.
+    span->SetSpanSetIterator(p.first);
+    return;
+  }
+
+  SpanList* list = &free_[span->length - 1];
+  if (span->location == Span::ON_NORMAL_FREELIST) {
     DLL_Prepend(&list->normal, span);
   } else {
-    stats_.unmapped_bytes += (span->length << kPageShift);
     DLL_Prepend(&list->returned, span);
   }
 }
@@ -426,7 +428,17 @@ void PageHeap::RemoveFromFreeList(Span* span) {
   } else {
     stats_.unmapped_bytes -= (span->length << kPageShift);
   }
-  DLL_Remove(span);
+  if (span->length > kMaxPages) {
+    SpanSet *set = &large_normal_;
+    if (span->location == Span::ON_RETURNED_FREELIST)
+      set = &large_returned_;
+    SpanSet::iterator iter = span->ExtractSpanSetIterator();
+    ASSERT(iter->span == span);
+    ASSERT(set->find(SpanPtrWithLength(span)) == iter);
+    set->erase(iter);
+  } else {
+    DLL_Remove(span);
+  }
 }
 
 void PageHeap::IncrementalScavenge(Length n) {
@@ -440,6 +452,8 @@ void PageHeap::IncrementalScavenge(Length n) {
     scavenge_counter_ = kDefaultReleaseDelay;
     return;
   }
+
+  ++stats_.scavenge_count;
 
   Length released_pages = ReleaseAtLeastNPages(1);
 
@@ -460,8 +474,7 @@ void PageHeap::IncrementalScavenge(Length n) {
   }
 }
 
-Length PageHeap::ReleaseLastNormalSpan(SpanList* slist) {
-  Span* s = slist->normal.prev;
+Length PageHeap::ReleaseSpan(Span* s) {
   ASSERT(s->location == Span::ON_NORMAL_FREELIST);
 
   if (DecommitSpan(s)) {
@@ -478,21 +491,35 @@ Length PageHeap::ReleaseLastNormalSpan(SpanList* slist) {
 Length PageHeap::ReleaseAtLeastNPages(Length num_pages) {
   Length released_pages = 0;
 
-  // Round robin through the lists of free spans, releasing the last
-  // span in each list.  Stop after releasing at least num_pages
+  // Round robin through the lists of free spans, releasing a
+  // span from each list.  Stop after releasing at least num_pages
   // or when there is nothing more to release.
   while (released_pages < num_pages && stats_.free_bytes > 0) {
     for (int i = 0; i < kMaxPages+1 && released_pages < num_pages;
          i++, release_index_++) {
+      Span *s;
       if (release_index_ > kMaxPages) release_index_ = 0;
-      SpanList* slist = (release_index_ == kMaxPages) ?
-          &large_ : &free_[release_index_];
-      if (!DLL_IsEmpty(&slist->normal)) {
-        Length released_len = ReleaseLastNormalSpan(slist);
-        // Some systems do not support release
-        if (released_len == 0) return released_pages;
-        released_pages += released_len;
+
+      if (release_index_ == kMaxPages) {
+        if (large_normal_.empty()) {
+          continue;
+        }
+        s = (large_normal_.begin())->span;
+      } else {
+        SpanList* slist = &free_[release_index_];
+        if (DLL_IsEmpty(&slist->normal)) {
+          continue;
+        }
+        s = slist->normal.prev;
       }
+      // TODO(todd) if the remaining number of pages to release
+      // is significantly smaller than s->length, and s is on the
+      // large freelist, should we carve s instead of releasing?
+      // the whole thing?
+      Length released_len = ReleaseSpan(s);
+      // Some systems do not support release
+      if (released_len == 0) return released_pages;
+      released_pages += released_len;
     }
   }
   return released_pages;
@@ -522,7 +549,7 @@ bool PageHeap::EnsureLimit(Length n, bool withRelease)
   return takenPages + n <= limit;
 }
 
-void PageHeap::RegisterSizeClass(Span* span, size_t sc) {
+void PageHeap::RegisterSizeClass(Span* span, uint32 sc) {
   // Associate span object with all interior pages as well
   ASSERT(span->location == Span::IN_USE);
   ASSERT(GetDescriptor(span->start) == span);
@@ -535,9 +562,9 @@ void PageHeap::RegisterSizeClass(Span* span, size_t sc) {
 }
 
 void PageHeap::GetSmallSpanStats(SmallSpanStats* result) {
-  for (int s = 0; s < kMaxPages; s++) {
-    result->normal_length[s] = DLL_Length(&free_[s].normal);
-    result->returned_length[s] = DLL_Length(&free_[s].returned);
+  for (int i = 0; i < kMaxPages; i++) {
+    result->normal_length[i] = DLL_Length(&free_[i].normal);
+    result->returned_length[i] = DLL_Length(&free_[i].returned);
   }
 }
 
@@ -545,12 +572,12 @@ void PageHeap::GetLargeSpanStats(LargeSpanStats* result) {
   result->spans = 0;
   result->normal_pages = 0;
   result->returned_pages = 0;
-  for (Span* s = large_.normal.next; s != &large_.normal; s = s->next) {
-    result->normal_pages += s->length;;
+  for (SpanSet::iterator it = large_normal_.begin(); it != large_normal_.end(); ++it) {
+    result->normal_pages += it->length;
     result->spans++;
   }
-  for (Span* s = large_.returned.next; s != &large_.returned; s = s->next) {
-    result->returned_pages += s->length;
+  for (SpanSet::iterator it = large_returned_.begin(); it != large_returned_.end(); ++it) {
+    result->returned_pages += it->length;
     result->spans++;
   }
 }
@@ -616,9 +643,16 @@ bool PageHeap::GrowHeap(Length n) {
   ask = actual_size >> kPageShift;
   RecordGrowth(ask << kPageShift);
 
+  ++stats_.reserve_count;
+  ++stats_.commit_count;
+
   uint64_t old_system_bytes = stats_.system_bytes;
   stats_.system_bytes += (ask << kPageShift);
   stats_.committed_bytes += (ask << kPageShift);
+
+  stats_.total_commit_bytes += (ask << kPageShift);
+  stats_.total_reserve_bytes += (ask << kPageShift);
+
   const PageID p = reinterpret_cast<uintptr_t>(ptr) >> kPageShift;
   ASSERT(p > 0);
 
@@ -651,18 +685,16 @@ bool PageHeap::GrowHeap(Length n) {
 }
 
 bool PageHeap::Check() {
-  ASSERT(free_[0].normal.next == &free_[0].normal);
-  ASSERT(free_[0].returned.next == &free_[0].returned);
   return true;
 }
 
 bool PageHeap::CheckExpensive() {
   bool result = Check();
-  CheckList(&large_.normal, kMaxPages, 1000000000, Span::ON_NORMAL_FREELIST);
-  CheckList(&large_.returned, kMaxPages, 1000000000, Span::ON_RETURNED_FREELIST);
-  for (Length s = 1; s < kMaxPages; s++) {
-    CheckList(&free_[s].normal, s, s, Span::ON_NORMAL_FREELIST);
-    CheckList(&free_[s].returned, s, s, Span::ON_RETURNED_FREELIST);
+  CheckSet(&large_normal_, kMaxPages + 1, Span::ON_NORMAL_FREELIST);
+  CheckSet(&large_returned_, kMaxPages + 1, Span::ON_RETURNED_FREELIST);
+  for (int s = 1; s <= kMaxPages; s++) {
+    CheckList(&free_[s - 1].normal, s, s, Span::ON_NORMAL_FREELIST);
+    CheckList(&free_[s - 1].returned, s, s, Span::ON_RETURNED_FREELIST);
   }
   return result;
 }
@@ -673,6 +705,18 @@ bool PageHeap::CheckList(Span* list, Length min_pages, Length max_pages,
     CHECK_CONDITION(s->location == freelist);  // NORMAL or RETURNED
     CHECK_CONDITION(s->length >= min_pages);
     CHECK_CONDITION(s->length <= max_pages);
+    CHECK_CONDITION(GetDescriptor(s->start) == s);
+    CHECK_CONDITION(GetDescriptor(s->start+s->length-1) == s);
+  }
+  return true;
+}
+
+bool PageHeap::CheckSet(SpanSet* spanset, Length min_pages,int freelist) {
+  for (SpanSet::iterator it = spanset->begin(); it != spanset->end(); ++it) {
+    Span* s = it->span;
+    CHECK_CONDITION(s->length == it->length);
+    CHECK_CONDITION(s->location == freelist);  // NORMAL or RETURNED
+    CHECK_CONDITION(s->length >= min_pages);
     CHECK_CONDITION(GetDescriptor(s->start) == s);
     CHECK_CONDITION(GetDescriptor(s->start+s->length-1) == s);
   }

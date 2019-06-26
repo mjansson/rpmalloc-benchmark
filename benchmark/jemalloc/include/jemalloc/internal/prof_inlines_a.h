@@ -1,15 +1,11 @@
 #ifndef JEMALLOC_INTERNAL_PROF_INLINES_A_H
 #define JEMALLOC_INTERNAL_PROF_INLINES_A_H
 
-#ifndef JEMALLOC_ENABLE_INLINE
-bool prof_accum_add(tsdn_t *tsdn, prof_accum_t *prof_accum,
-    uint64_t accumbytes);
-void prof_accum_cancel(tsdn_t *tsdn, prof_accum_t *prof_accum, size_t usize);
-#endif
+#include "jemalloc/internal/mutex.h"
 
-#if (defined(JEMALLOC_ENABLE_INLINE) || defined(JEMALLOC_PROF_C_))
-JEMALLOC_INLINE bool
-prof_accum_add(tsdn_t *tsdn, prof_accum_t *prof_accum, uint64_t accumbytes) {
+static inline bool
+prof_accum_add(tsdn_t *tsdn, prof_accum_t *prof_accum,
+    uint64_t accumbytes) {
 	cassert(config_prof);
 
 	bool overflow;
@@ -22,15 +18,16 @@ prof_accum_add(tsdn_t *tsdn, prof_accum_t *prof_accum, uint64_t accumbytes) {
 	 * avoids rate-limiting allocation.
 	 */
 #ifdef JEMALLOC_ATOMIC_U64
+	a0 = atomic_load_u64(&prof_accum->accumbytes, ATOMIC_RELAXED);
 	do {
-		a0 = atomic_read_u64(&prof_accum->accumbytes);
 		a1 = a0 + accumbytes;
 		assert(a1 >= a0);
 		overflow = (a1 >= prof_interval);
 		if (overflow) {
 			a1 %= prof_interval;
 		}
-	} while (atomic_cas_u64(&prof_accum->accumbytes, a0, a1));
+	} while (!atomic_compare_exchange_weak_u64(&prof_accum->accumbytes, &a0,
+	    a1, ATOMIC_RELAXED, ATOMIC_RELAXED));
 #else
 	malloc_mutex_lock(tsdn, &prof_accum->mtx);
 	a0 = prof_accum->accumbytes;
@@ -45,8 +42,9 @@ prof_accum_add(tsdn_t *tsdn, prof_accum_t *prof_accum, uint64_t accumbytes) {
 	return overflow;
 }
 
-JEMALLOC_INLINE void
-prof_accum_cancel(tsdn_t *tsdn, prof_accum_t *prof_accum, size_t usize) {
+static inline void
+prof_accum_cancel(tsdn_t *tsdn, prof_accum_t *prof_accum,
+    size_t usize) {
 	cassert(config_prof);
 
 	/*
@@ -57,20 +55,31 @@ prof_accum_cancel(tsdn_t *tsdn, prof_accum_t *prof_accum, size_t usize) {
 	 */
 	uint64_t a0, a1;
 #ifdef JEMALLOC_ATOMIC_U64
+	a0 = atomic_load_u64(&prof_accum->accumbytes, ATOMIC_RELAXED);
 	do {
-		a0 = atomic_read_u64(&prof_accum->accumbytes);
-		a1 = (a0 >= LARGE_MINCLASS - usize) ?  a0 - (LARGE_MINCLASS -
-		    usize) : 0;
-	} while (atomic_cas_u64(&prof_accum->accumbytes, a0, a1));
+		a1 = (a0 >= SC_LARGE_MINCLASS - usize)
+		    ? a0 - (SC_LARGE_MINCLASS - usize) : 0;
+	} while (!atomic_compare_exchange_weak_u64(&prof_accum->accumbytes, &a0,
+	    a1, ATOMIC_RELAXED, ATOMIC_RELAXED));
 #else
 	malloc_mutex_lock(tsdn, &prof_accum->mtx);
 	a0 = prof_accum->accumbytes;
-	a1 = (a0 >= LARGE_MINCLASS - usize) ?  a0 - (LARGE_MINCLASS - usize) :
-	    0;
+	a1 = (a0 >= SC_LARGE_MINCLASS - usize)
+	    ?  a0 - (SC_LARGE_MINCLASS - usize) : 0;
 	prof_accum->accumbytes = a1;
 	malloc_mutex_unlock(tsdn, &prof_accum->mtx);
 #endif
 }
-#endif
+
+JEMALLOC_ALWAYS_INLINE bool
+prof_active_get_unlocked(void) {
+	/*
+	 * Even if opt_prof is true, sampling can be temporarily disabled by
+	 * setting prof_active to false.  No locking is used when reading
+	 * prof_active in the fast path, so there are no guarantees regarding
+	 * how long it will take for all threads to notice state changes.
+	 */
+	return prof_active;
+}
 
 #endif /* JEMALLOC_INTERNAL_PROF_INLINES_A_H */

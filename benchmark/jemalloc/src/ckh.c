@@ -35,7 +35,17 @@
  *
  ******************************************************************************/
 #define JEMALLOC_CKH_C_
-#include "jemalloc/internal/jemalloc_internal.h"
+#include "jemalloc/internal/jemalloc_preamble.h"
+
+#include "jemalloc/internal/ckh.h"
+
+#include "jemalloc/internal/jemalloc_internal_includes.h"
+
+#include "jemalloc/internal/assert.h"
+#include "jemalloc/internal/hash.h"
+#include "jemalloc/internal/malloc_io.h"
+#include "jemalloc/internal/prng.h"
+#include "jemalloc/internal/util.h"
 
 /******************************************************************************/
 /* Function prototypes for non-inline static functions. */
@@ -49,7 +59,7 @@ static void	ckh_shrink(tsd_t *tsd, ckh_t *ckh);
  * Search bucket for key and return the cell number if found; SIZE_T_MAX
  * otherwise.
  */
-JEMALLOC_INLINE_C size_t
+static size_t
 ckh_bucket_search(ckh_t *ckh, size_t bucket, const void *key) {
 	ckhc_t *cell;
 	unsigned i;
@@ -67,7 +77,7 @@ ckh_bucket_search(ckh_t *ckh, size_t bucket, const void *key) {
 /*
  * Search table for key and return cell number if found; SIZE_T_MAX otherwise.
  */
-JEMALLOC_INLINE_C size_t
+static size_t
 ckh_isearch(ckh_t *ckh, const void *key) {
 	size_t hashes[2], bucket, cell;
 
@@ -88,7 +98,7 @@ ckh_isearch(ckh_t *ckh, const void *key) {
 	return cell;
 }
 
-JEMALLOC_INLINE_C bool
+static bool
 ckh_try_bucket_insert(ckh_t *ckh, size_t bucket, const void *key,
     const void *data) {
 	ckhc_t *cell;
@@ -120,7 +130,7 @@ ckh_try_bucket_insert(ckh_t *ckh, size_t bucket, const void *key,
  * eviction/relocation procedure until either success or detection of an
  * eviction/relocation bucket cycle.
  */
-JEMALLOC_INLINE_C bool
+static bool
 ckh_evict_reloc_insert(ckh_t *ckh, size_t argbucket, void const **argkey,
     void const **argdata) {
 	const void *key, *data, *tkey, *tdata;
@@ -191,7 +201,7 @@ ckh_evict_reloc_insert(ckh_t *ckh, size_t argbucket, void const **argkey,
 	}
 }
 
-JEMALLOC_INLINE_C bool
+static bool
 ckh_try_insert(ckh_t *ckh, void const**argkey, void const**argdata) {
 	size_t hashes[2], bucket;
 	const void *key = *argkey;
@@ -221,7 +231,7 @@ ckh_try_insert(ckh_t *ckh, void const**argkey, void const**argdata) {
  * Try to rebuild the hash table from scratch by inserting all items from the
  * old table into the new.
  */
-JEMALLOC_INLINE_C bool
+static bool
 ckh_rebuild(ckh_t *ckh, ckhc_t *aTab) {
 	size_t count, i, nins;
 	const void *key, *data;
@@ -264,8 +274,9 @@ ckh_grow(tsd_t *tsd, ckh_t *ckh) {
 		size_t usize;
 
 		lg_curcells++;
-		usize = sa2u(sizeof(ckhc_t) << lg_curcells, CACHELINE);
-		if (unlikely(usize == 0 || usize > LARGE_MAXCLASS)) {
+		usize = sz_sa2u(sizeof(ckhc_t) << lg_curcells, CACHELINE);
+		if (unlikely(usize == 0
+		    || usize > SC_LARGE_MAXCLASS)) {
 			ret = true;
 			goto label_return;
 		}
@@ -282,14 +293,12 @@ ckh_grow(tsd_t *tsd, ckh_t *ckh) {
 		ckh->lg_curbuckets = lg_curcells - LG_CKH_BUCKET_CELLS;
 
 		if (!ckh_rebuild(ckh, tab)) {
-			idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), tab),
-			    tab, NULL, true, true);
+			idalloctm(tsd_tsdn(tsd), tab, NULL, NULL, true, true);
 			break;
 		}
 
 		/* Rebuilding failed, so back out partially rebuilt table. */
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), ckh->tab),
-		    ckh->tab, NULL, true, true);
+		idalloctm(tsd_tsdn(tsd), ckh->tab, NULL, NULL, true, true);
 		ckh->tab = tab;
 		ckh->lg_curbuckets = lg_prevbuckets;
 	}
@@ -311,8 +320,8 @@ ckh_shrink(tsd_t *tsd, ckh_t *ckh) {
 	 */
 	lg_prevbuckets = ckh->lg_curbuckets;
 	lg_curcells = ckh->lg_curbuckets + LG_CKH_BUCKET_CELLS - 1;
-	usize = sa2u(sizeof(ckhc_t) << lg_curcells, CACHELINE);
-	if (unlikely(usize == 0 || usize > LARGE_MAXCLASS)) {
+	usize = sz_sa2u(sizeof(ckhc_t) << lg_curcells, CACHELINE);
+	if (unlikely(usize == 0 || usize > SC_LARGE_MAXCLASS)) {
 		return;
 	}
 	tab = (ckhc_t *)ipallocztm(tsd_tsdn(tsd), usize, CACHELINE, true, NULL,
@@ -331,8 +340,7 @@ ckh_shrink(tsd_t *tsd, ckh_t *ckh) {
 	ckh->lg_curbuckets = lg_curcells - LG_CKH_BUCKET_CELLS;
 
 	if (!ckh_rebuild(ckh, tab)) {
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), tab), tab, NULL,
-		    true, true);
+		idalloctm(tsd_tsdn(tsd), tab, NULL, NULL, true, true);
 #ifdef CKH_COUNT
 		ckh->nshrinks++;
 #endif
@@ -340,8 +348,7 @@ ckh_shrink(tsd_t *tsd, ckh_t *ckh) {
 	}
 
 	/* Rebuilding failed, so back out partially rebuilt table. */
-	idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), ckh->tab), ckh->tab,
-	    NULL, true, true);
+	idalloctm(tsd_tsdn(tsd), ckh->tab, NULL, NULL, true, true);
 	ckh->tab = tab;
 	ckh->lg_curbuckets = lg_prevbuckets;
 #ifdef CKH_COUNT
@@ -389,8 +396,8 @@ ckh_new(tsd_t *tsd, ckh_t *ckh, size_t minitems, ckh_hash_t *hash,
 	ckh->hash = hash;
 	ckh->keycomp = keycomp;
 
-	usize = sa2u(sizeof(ckhc_t) << lg_mincells, CACHELINE);
-	if (unlikely(usize == 0 || usize > LARGE_MAXCLASS)) {
+	usize = sz_sa2u(sizeof(ckhc_t) << lg_mincells, CACHELINE);
+	if (unlikely(usize == 0 || usize > SC_LARGE_MAXCLASS)) {
 		ret = true;
 		goto label_return;
 	}
@@ -422,8 +429,7 @@ ckh_delete(tsd_t *tsd, ckh_t *ckh) {
 	    (unsigned long long)ckh->nrelocs);
 #endif
 
-	idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), ckh->tab), ckh->tab,
-	    NULL, true, true);
+	idalloctm(tsd_tsdn(tsd), ckh->tab, NULL, NULL, true, true);
 	if (config_debug) {
 		memset(ckh, JEMALLOC_FREE_JUNK, sizeof(ckh_t));
 	}

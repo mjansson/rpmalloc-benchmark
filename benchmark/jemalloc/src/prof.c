@@ -1,5 +1,14 @@
 #define JEMALLOC_PROF_C_
-#include "jemalloc/internal/jemalloc_internal.h"
+#include "jemalloc/internal/jemalloc_preamble.h"
+#include "jemalloc/internal/jemalloc_internal_includes.h"
+
+#include "jemalloc/internal/assert.h"
+#include "jemalloc/internal/ckh.h"
+#include "jemalloc/internal/hash.h"
+#include "jemalloc/internal/malloc_io.h"
+#include "jemalloc/internal/mutex.h"
+#include "jemalloc/internal/emitter.h"
+
 /******************************************************************************/
 
 #ifdef JEMALLOC_PROF_LIBUNWIND
@@ -8,7 +17,14 @@
 #endif
 
 #ifdef JEMALLOC_PROF_LIBGCC
+/*
+ * We have a circular dependency -- jemalloc_internal.h tells us if we should
+ * use libgcc's unwinding functionality, but after we've included that, we've
+ * already hooked _Unwind_Backtrace.  We'll temporarily disable hooking.
+ */
+#undef _Unwind_Backtrace
 #include <unwind.h>
+#define _Unwind_Backtrace JEMALLOC_HOOK(_Unwind_Backtrace, test_hooks_libc_hook)
 #endif
 
 /******************************************************************************/
@@ -23,6 +39,7 @@ bool		opt_prof_gdump = false;
 bool		opt_prof_final = false;
 bool		opt_prof_leak = false;
 bool		opt_prof_accum = false;
+bool		opt_prof_log = false;
 char		opt_prof_prefix[
     /* Minimize memory bloat for non-prof builds. */
 #ifdef JEMALLOC_PROF
@@ -55,6 +72,100 @@ uint64_t	prof_interval = 0;
 
 size_t		lg_prof_sample;
 
+typedef enum prof_logging_state_e prof_logging_state_t;
+enum prof_logging_state_e {
+	prof_logging_state_stopped,
+	prof_logging_state_started,
+	prof_logging_state_dumping
+};
+
+/*
+ * - stopped: log_start never called, or previous log_stop has completed.
+ * - started: log_start called, log_stop not called yet. Allocations are logged.
+ * - dumping: log_stop called but not finished; samples are not logged anymore.
+ */
+prof_logging_state_t prof_logging_state = prof_logging_state_stopped;
+
+#ifdef JEMALLOC_JET
+static bool prof_log_dummy = false;
+#endif
+
+/* Incremented for every log file that is output. */
+static uint64_t log_seq = 0;
+static char log_filename[
+    /* Minimize memory bloat for non-prof builds. */
+#ifdef JEMALLOC_PROF
+    PATH_MAX +
+#endif
+    1];
+
+/* Timestamp for most recent call to log_start(). */
+static nstime_t log_start_timestamp = NSTIME_ZERO_INITIALIZER;
+
+/* Increment these when adding to the log_bt and log_thr linked lists. */
+static size_t log_bt_index = 0;
+static size_t log_thr_index = 0;
+
+/* Linked list node definitions. These are only used in prof.c. */
+typedef struct prof_bt_node_s prof_bt_node_t;
+
+struct prof_bt_node_s {
+	prof_bt_node_t *next;
+	size_t index;
+	prof_bt_t bt;
+	/* Variable size backtrace vector pointed to by bt. */
+	void *vec[1];
+};
+
+typedef struct prof_thr_node_s prof_thr_node_t;
+
+struct prof_thr_node_s {
+	prof_thr_node_t *next;
+	size_t index;
+	uint64_t thr_uid;
+	/* Variable size based on thr_name_sz. */
+	char name[1];
+};
+
+typedef struct prof_alloc_node_s prof_alloc_node_t;
+
+/* This is output when logging sampled allocations. */
+struct prof_alloc_node_s {
+	prof_alloc_node_t *next;
+	/* Indices into an array of thread data. */
+	size_t alloc_thr_ind;
+	size_t free_thr_ind;
+
+	/* Indices into an array of backtraces. */
+	size_t alloc_bt_ind;
+	size_t free_bt_ind;
+
+	uint64_t alloc_time_ns;
+	uint64_t free_time_ns;
+
+	size_t usize;
+};
+
+/*
+ * Created on the first call to prof_log_start and deleted on prof_log_stop.
+ * These are the backtraces and threads that have already been logged by an
+ * allocation.
+ */
+static bool log_tables_initialized = false;
+static ckh_t log_bt_node_set;
+static ckh_t log_thr_node_set;
+
+/* Store linked lists for logged data. */
+static prof_bt_node_t *log_bt_first = NULL;
+static prof_bt_node_t *log_bt_last = NULL;
+static prof_thr_node_t *log_thr_first = NULL;
+static prof_thr_node_t *log_thr_last = NULL;
+static prof_alloc_node_t *log_alloc_first = NULL;
+static prof_alloc_node_t *log_alloc_last = NULL;
+
+/* Protects the prof_logging_state and any log_{...} variable. */
+static malloc_mutex_t log_mtx;
+
 /*
  * Table of mutexes that are shared among gctx's.  These are leaf locks, so
  * there is no problem with using them for more than one gctx at the same time.
@@ -63,7 +174,7 @@ size_t		lg_prof_sample;
  * creating/destroying mutexes.
  */
 static malloc_mutex_t	*gctx_locks;
-static unsigned		cum_gctxs; /* Atomic counter. */
+static atomic_u_t	cum_gctxs; /* Atomic counter. */
 
 /*
  * Table of mutexes that are shared among tdata's.  No operations require
@@ -78,7 +189,8 @@ static malloc_mutex_t	*tdata_locks;
  * structure that knows about all backtraces currently captured.
  */
 static ckh_t		bt2gctx;
-static malloc_mutex_t	bt2gctx_mtx;
+/* Non static to enable profiling. */
+malloc_mutex_t		bt2gctx_mtx;
 
 /*
  * Tree of all extant prof_tdata_t structures, regardless of state,
@@ -129,10 +241,16 @@ static void	prof_tdata_destroy(tsd_t *tsd, prof_tdata_t *tdata,
     bool even_if_attached);
 static char	*prof_thread_name_alloc(tsdn_t *tsdn, const char *thread_name);
 
+/* Hashtable functions for log_bt_node_set and log_thr_node_set. */
+static void prof_thr_node_hash(const void *key, size_t r_hash[2]);
+static bool prof_thr_node_keycomp(const void *k1, const void *k2);
+static void prof_bt_node_hash(const void *key, size_t r_hash[2]);
+static bool prof_bt_node_keycomp(const void *k1, const void *k2);
+
 /******************************************************************************/
 /* Red-black trees. */
 
-JEMALLOC_INLINE_C int
+static int
 prof_tctx_comp(const prof_tctx_t *a, const prof_tctx_t *b) {
 	uint64_t a_thr_uid = a->thr_uid;
 	uint64_t b_thr_uid = b->thr_uid;
@@ -155,7 +273,7 @@ prof_tctx_comp(const prof_tctx_t *a, const prof_tctx_t *b) {
 rb_gen(static UNUSED, tctx_tree_, prof_tctx_tree_t, prof_tctx_t,
     tctx_link, prof_tctx_comp)
 
-JEMALLOC_INLINE_C int
+static int
 prof_gctx_comp(const prof_gctx_t *a, const prof_gctx_t *b) {
 	unsigned a_len = a->bt.len;
 	unsigned b_len = b->bt.len;
@@ -170,7 +288,7 @@ prof_gctx_comp(const prof_gctx_t *a, const prof_gctx_t *b) {
 rb_gen(static UNUSED, gctx_tree_, prof_gctx_tree_t, prof_gctx_t, dump_link,
     prof_gctx_comp)
 
-JEMALLOC_INLINE_C int
+static int
 prof_tdata_comp(const prof_tdata_t *a, const prof_tdata_t *b) {
 	int ret;
 	uint64_t a_uid = a->thr_uid;
@@ -222,9 +340,15 @@ prof_alloc_rollback(tsd_t *tsd, prof_tctx_t *tctx, bool updated) {
 }
 
 void
-prof_malloc_sample_object(tsdn_t *tsdn, extent_t *extent, const void *ptr,
-    size_t usize, prof_tctx_t *tctx) {
-	prof_tctx_set(tsdn, extent, ptr, usize, tctx);
+prof_malloc_sample_object(tsdn_t *tsdn, const void *ptr, size_t usize,
+    prof_tctx_t *tctx) {
+	prof_tctx_set(tsdn, ptr, usize, NULL, tctx);
+
+	/* Get the current time and set this in the extent_t. We'll read this
+	 * when free() is called. */
+	nstime_t t = NSTIME_ZERO_INITIALIZER;
+	nstime_update(&t);
+	prof_alloc_time_set(tsdn, ptr, NULL, t);
 
 	malloc_mutex_lock(tsdn, tctx->tdata->lock);
 	tctx->cnts.curobjs++;
@@ -237,13 +361,173 @@ prof_malloc_sample_object(tsdn_t *tsdn, extent_t *extent, const void *ptr,
 	malloc_mutex_unlock(tsdn, tctx->tdata->lock);
 }
 
+static size_t
+prof_log_bt_index(tsd_t *tsd, prof_bt_t *bt) {
+	assert(prof_logging_state == prof_logging_state_started);
+	malloc_mutex_assert_owner(tsd_tsdn(tsd), &log_mtx);
+
+	prof_bt_node_t dummy_node;
+	dummy_node.bt = *bt;
+	prof_bt_node_t *node;
+
+	/* See if this backtrace is already cached in the table. */
+	if (ckh_search(&log_bt_node_set, (void *)(&dummy_node),
+	    (void **)(&node), NULL)) {
+		size_t sz = offsetof(prof_bt_node_t, vec) +
+			        (bt->len * sizeof(void *));
+		prof_bt_node_t *new_node = (prof_bt_node_t *)
+		    iallocztm(tsd_tsdn(tsd), sz, sz_size2index(sz), false, NULL,
+		    true, arena_get(TSDN_NULL, 0, true), true);
+		if (log_bt_first == NULL) {
+			log_bt_first = new_node;
+			log_bt_last = new_node;
+		} else {
+			log_bt_last->next = new_node;
+			log_bt_last = new_node;
+		}
+
+		new_node->next = NULL;
+		new_node->index = log_bt_index;
+		/*
+		 * Copy the backtrace: bt is inside a tdata or gctx, which
+		 * might die before prof_log_stop is called.
+		 */
+		new_node->bt.len = bt->len;
+		memcpy(new_node->vec, bt->vec, bt->len * sizeof(void *));
+		new_node->bt.vec = new_node->vec;
+
+		log_bt_index++;
+		ckh_insert(tsd, &log_bt_node_set, (void *)new_node, NULL);
+		return new_node->index;
+	} else {
+		return node->index;
+	}
+}
+static size_t
+prof_log_thr_index(tsd_t *tsd, uint64_t thr_uid, const char *name) {
+	assert(prof_logging_state == prof_logging_state_started);
+	malloc_mutex_assert_owner(tsd_tsdn(tsd), &log_mtx);
+
+	prof_thr_node_t dummy_node;
+	dummy_node.thr_uid = thr_uid;
+	prof_thr_node_t *node;
+
+	/* See if this thread is already cached in the table. */
+	if (ckh_search(&log_thr_node_set, (void *)(&dummy_node),
+	    (void **)(&node), NULL)) {
+		size_t sz = offsetof(prof_thr_node_t, name) + strlen(name) + 1;
+		prof_thr_node_t *new_node = (prof_thr_node_t *)
+		    iallocztm(tsd_tsdn(tsd), sz, sz_size2index(sz), false, NULL,
+		    true, arena_get(TSDN_NULL, 0, true), true);
+		if (log_thr_first == NULL) {
+			log_thr_first = new_node;
+			log_thr_last = new_node;
+		} else {
+			log_thr_last->next = new_node;
+			log_thr_last = new_node;
+		}
+
+		new_node->next = NULL;
+		new_node->index = log_thr_index;
+		new_node->thr_uid = thr_uid;
+		strcpy(new_node->name, name);
+
+		log_thr_index++;
+		ckh_insert(tsd, &log_thr_node_set, (void *)new_node, NULL);
+		return new_node->index;
+	} else {
+		return node->index;
+	}
+}
+
+static void
+prof_try_log(tsd_t *tsd, const void *ptr, size_t usize, prof_tctx_t *tctx) {
+	malloc_mutex_assert_owner(tsd_tsdn(tsd), tctx->tdata->lock);
+
+	prof_tdata_t *cons_tdata = prof_tdata_get(tsd, false);
+	if (cons_tdata == NULL) {
+		/*
+		 * We decide not to log these allocations. cons_tdata will be
+		 * NULL only when the current thread is in a weird state (e.g.
+		 * it's being destroyed).
+		 */
+		return;
+	}
+
+	malloc_mutex_lock(tsd_tsdn(tsd), &log_mtx);
+
+	if (prof_logging_state != prof_logging_state_started) {
+		goto label_done;
+	}
+
+	if (!log_tables_initialized) {
+		bool err1 = ckh_new(tsd, &log_bt_node_set, PROF_CKH_MINITEMS,
+				prof_bt_node_hash, prof_bt_node_keycomp);
+		bool err2 = ckh_new(tsd, &log_thr_node_set, PROF_CKH_MINITEMS,
+				prof_thr_node_hash, prof_thr_node_keycomp);
+		if (err1 || err2) {
+			goto label_done;
+		}
+		log_tables_initialized = true;
+	}
+
+	nstime_t alloc_time = prof_alloc_time_get(tsd_tsdn(tsd), ptr,
+			          (alloc_ctx_t *)NULL);
+	nstime_t free_time = NSTIME_ZERO_INITIALIZER;
+	nstime_update(&free_time);
+
+	size_t sz = sizeof(prof_alloc_node_t);
+	prof_alloc_node_t *new_node = (prof_alloc_node_t *)
+	    iallocztm(tsd_tsdn(tsd), sz, sz_size2index(sz), false, NULL, true,
+	    arena_get(TSDN_NULL, 0, true), true);
+
+	const char *prod_thr_name = (tctx->tdata->thread_name == NULL)?
+				        "" : tctx->tdata->thread_name;
+	const char *cons_thr_name = prof_thread_name_get(tsd);
+
+	prof_bt_t bt;
+	/* Initialize the backtrace, using the buffer in tdata to store it. */
+	bt_init(&bt, cons_tdata->vec);
+	prof_backtrace(&bt);
+	prof_bt_t *cons_bt = &bt;
+
+	/* We haven't destroyed tctx yet, so gctx should be good to read. */
+	prof_bt_t *prod_bt = &tctx->gctx->bt;
+
+	new_node->next = NULL;
+	new_node->alloc_thr_ind = prof_log_thr_index(tsd, tctx->tdata->thr_uid,
+				      prod_thr_name);
+	new_node->free_thr_ind = prof_log_thr_index(tsd, cons_tdata->thr_uid,
+				     cons_thr_name);
+	new_node->alloc_bt_ind = prof_log_bt_index(tsd, prod_bt);
+	new_node->free_bt_ind = prof_log_bt_index(tsd, cons_bt);
+	new_node->alloc_time_ns = nstime_ns(&alloc_time);
+	new_node->free_time_ns = nstime_ns(&free_time);
+	new_node->usize = usize;
+
+	if (log_alloc_first == NULL) {
+		log_alloc_first = new_node;
+		log_alloc_last = new_node;
+	} else {
+		log_alloc_last->next = new_node;
+		log_alloc_last = new_node;
+	}
+
+label_done:
+	malloc_mutex_unlock(tsd_tsdn(tsd), &log_mtx);
+}
+
 void
-prof_free_sampled_object(tsd_t *tsd, size_t usize, prof_tctx_t *tctx) {
+prof_free_sampled_object(tsd_t *tsd, const void *ptr, size_t usize,
+    prof_tctx_t *tctx) {
 	malloc_mutex_lock(tsd_tsdn(tsd), tctx->tdata->lock);
+
 	assert(tctx->cnts.curobjs > 0);
 	assert(tctx->cnts.curbytes >= usize);
 	tctx->cnts.curobjs--;
 	tctx->cnts.curbytes -= usize;
+
+	prof_try_log(tsd, ptr, usize, tctx);
 
 	if (prof_tctx_should_destroy(tsd_tsdn(tsd), tctx)) {
 		prof_tctx_destroy(tsd, tctx);
@@ -260,7 +544,7 @@ bt_init(prof_bt_t *bt, void **vec) {
 	bt->len = 0;
 }
 
-JEMALLOC_INLINE_C void
+static void
 prof_enter(tsd_t *tsd, prof_tdata_t *tdata) {
 	cassert(config_prof);
 	assert(tdata == prof_tdata_get(tsd, false));
@@ -273,7 +557,7 @@ prof_enter(tsd_t *tsd, prof_tdata_t *tdata) {
 	malloc_mutex_lock(tsd_tsdn(tsd), &bt2gctx_mtx);
 }
 
-JEMALLOC_INLINE_C void
+static void
 prof_leave(tsd_t *tsd, prof_tdata_t *tdata) {
 	cassert(config_prof);
 	assert(tdata == prof_tdata_get(tsd, false));
@@ -523,7 +807,7 @@ prof_backtrace(prof_bt_t *bt) {
 
 static malloc_mutex_t *
 prof_gctx_mutex_choose(void) {
-	unsigned ngctxs = atomic_add_u(&cum_gctxs, 1);
+	unsigned ngctxs = atomic_fetch_add_u(&cum_gctxs, 1, ATOMIC_RELAXED);
 
 	return &gctx_locks[(ngctxs - 1) % PROF_NCTX_LOCKS];
 }
@@ -540,7 +824,7 @@ prof_gctx_create(tsdn_t *tsdn, prof_bt_t *bt) {
 	 */
 	size_t size = offsetof(prof_gctx_t, vec) + (bt->len * sizeof(void *));
 	prof_gctx_t *gctx = (prof_gctx_t *)iallocztm(tsdn, size,
-	    size2index(size), false, NULL, true, arena_get(TSDN_NULL, 0, true),
+	    sz_size2index(size), false, NULL, true, arena_get(TSDN_NULL, 0, true),
 	    true);
 	if (gctx == NULL) {
 		return NULL;
@@ -582,8 +866,7 @@ prof_gctx_try_destroy(tsd_t *tsd, prof_tdata_t *tdata_self, prof_gctx_t *gctx,
 		prof_leave(tsd, tdata_self);
 		/* Destroy gctx. */
 		malloc_mutex_unlock(tsd_tsdn(tsd), gctx->lock);
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), gctx), gctx,
-		    NULL, true, true);
+		idalloctm(tsd_tsdn(tsd), gctx, NULL, NULL, true, true);
 	} else {
 		/*
 		 * Compensate for increment in prof_tctx_destroy() or
@@ -697,8 +980,7 @@ prof_tctx_destroy(tsd_t *tsd, prof_tctx_t *tctx) {
 	}
 
 	if (destroy_tctx) {
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), tctx), tctx,
-		    NULL, true, true);
+		idalloctm(tsd_tsdn(tsd), tctx, NULL, NULL, true, true);
 	}
 }
 
@@ -730,8 +1012,8 @@ prof_lookup_global(tsd_t *tsd, prof_bt_t *bt, prof_tdata_t *tdata,
 			if (ckh_insert(tsd, &bt2gctx, btkey.v, gctx.v)) {
 				/* OOM. */
 				prof_leave(tsd, tdata);
-				idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd),
-				    gctx.v), gctx.v, NULL, true, true);
+				idalloctm(tsd_tsdn(tsd), gctx.v, NULL, NULL,
+				    true, true);
 				return true;
 			}
 			new_gctx = true;
@@ -755,8 +1037,8 @@ prof_lookup_global(tsd_t *tsd, prof_bt_t *bt, prof_tdata_t *tdata,
 
 		if (tgctx.v != NULL) {
 			/* Lost race to insert. */
-			idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd),
-			    tgctx.v), tgctx.v, NULL, true, true);
+			idalloctm(tsd_tsdn(tsd), tgctx.v, NULL, NULL, true,
+			    true);
 		}
 	}
 	prof_leave(tsd, tdata);
@@ -805,7 +1087,7 @@ prof_lookup(tsd_t *tsd, prof_bt_t *bt) {
 
 		/* Link a prof_tctx_t into gctx for this thread. */
 		ret.v = iallocztm(tsd_tsdn(tsd), sizeof(prof_tctx_t),
-		    size2index(sizeof(prof_tctx_t)), false, NULL, true,
+		    sz_size2index(sizeof(prof_tctx_t)), false, NULL, true,
 		    arena_ichoose(tsd, NULL), true);
 		if (ret.p == NULL) {
 			if (new_gctx) {
@@ -828,8 +1110,7 @@ prof_lookup(tsd_t *tsd, prof_bt_t *bt) {
 			if (new_gctx) {
 				prof_gctx_try_destroy(tsd, tdata, gctx, tdata);
 			}
-			idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), ret.v),
-			    ret.v, NULL, true, true);
+			idalloctm(tsd_tsdn(tsd), ret.v, NULL, NULL, true, true);
 			return NULL;
 		}
 		malloc_mutex_lock(tsd_tsdn(tsd), gctx->lock);
@@ -858,15 +1139,12 @@ prof_lookup(tsd_t *tsd, prof_bt_t *bt) {
 void
 prof_sample_threshold_update(prof_tdata_t *tdata) {
 #ifdef JEMALLOC_PROF
-	uint64_t r;
-	double u;
-
 	if (!config_prof) {
 		return;
 	}
 
 	if (lg_prof_sample == 0) {
-		tdata->bytes_until_sample = 0;
+		tsd_bytes_until_sample_set(tsd_fetch(), 0);
 		return;
 	}
 
@@ -888,11 +1166,16 @@ prof_sample_threshold_update(prof_tdata_t *tdata) {
 	 *   pp 500
 	 *   (http://luc.devroye.org/rnbookindex.html)
 	 */
-	r = prng_lg_range_u64(&tdata->prng_state, 53);
-	u = (double)r * (1.0/9007199254740992.0L);
-	tdata->bytes_until_sample = (uint64_t)(log(u) /
+	uint64_t r = prng_lg_range_u64(&tdata->prng_state, 53);
+	double u = (double)r * (1.0/9007199254740992.0L);
+	uint64_t bytes_until_sample = (uint64_t)(log(u) /
 	    log(1.0 - (1.0 / (double)((uint64_t)1U << lg_prof_sample))))
 	    + (uint64_t)1U;
+	if (bytes_until_sample > SSIZE_MAX) {
+		bytes_until_sample = SSIZE_MAX;
+	}
+	tsd_bytes_until_sample_set(tsd_fetch(), bytes_until_sample);
+
 #endif
 }
 
@@ -920,9 +1203,7 @@ prof_tdata_count(void) {
 
 	return tdata_count;
 }
-#endif
 
-#ifdef JEMALLOC_JET
 size_t
 prof_bt_count(void) {
 	size_t bt_count;
@@ -943,12 +1224,8 @@ prof_bt_count(void) {
 }
 #endif
 
-#ifdef JEMALLOC_JET
-#undef prof_dump_open
-#define prof_dump_open JEMALLOC_N(prof_dump_open_impl)
-#endif
 static int
-prof_dump_open(bool propagate_err, const char *filename) {
+prof_dump_open_impl(bool propagate_err, const char *filename) {
 	int fd;
 
 	fd = creat(filename, 0644);
@@ -962,11 +1239,7 @@ prof_dump_open(bool propagate_err, const char *filename) {
 
 	return fd;
 }
-#ifdef JEMALLOC_JET
-#undef prof_dump_open
-#define prof_dump_open JEMALLOC_N(prof_dump_open)
-prof_dump_open_t *prof_dump_open = JEMALLOC_N(prof_dump_open_impl);
-#endif
+prof_dump_open_t *JET_MUTABLE prof_dump_open = prof_dump_open_impl;
 
 static bool
 prof_dump_flush(bool propagate_err) {
@@ -975,7 +1248,7 @@ prof_dump_flush(bool propagate_err) {
 
 	cassert(config_prof);
 
-	err = write(prof_dump_fd, prof_dump_buf, prof_dump_buf_end);
+	err = malloc_write_fd(prof_dump_fd, prof_dump_buf, prof_dump_buf_end);
 	if (err == -1) {
 		if (!propagate_err) {
 			malloc_write("<jemalloc>: write() failed during heap "
@@ -1240,9 +1513,8 @@ prof_gctx_finish(tsd_t *tsd, prof_gctx_tree_t *gctxs) {
 					    to_destroy);
 					tctx_tree_remove(&gctx->tctxs,
 					    to_destroy);
-					idalloctm(tsd_tsdn(tsd),
-					    iealloc(tsd_tsdn(tsd), to_destroy),
-					    to_destroy, NULL, true, true);
+					idalloctm(tsd_tsdn(tsd), to_destroy,
+					    NULL, NULL, true, true);
 				} else {
 					next = NULL;
 				}
@@ -1320,12 +1592,9 @@ prof_tdata_dump_iter(prof_tdata_tree_t *tdatas, prof_tdata_t *tdata,
 	return NULL;
 }
 
-#ifdef JEMALLOC_JET
-#undef prof_dump_header
-#define prof_dump_header JEMALLOC_N(prof_dump_header_impl)
-#endif
 static bool
-prof_dump_header(tsdn_t *tsdn, bool propagate_err, const prof_cnt_t *cnt_all) {
+prof_dump_header_impl(tsdn_t *tsdn, bool propagate_err,
+    const prof_cnt_t *cnt_all) {
 	bool ret;
 
 	if (prof_dump_printf(propagate_err,
@@ -1342,11 +1611,7 @@ prof_dump_header(tsdn_t *tsdn, bool propagate_err, const prof_cnt_t *cnt_all) {
 	malloc_mutex_unlock(tsdn, &tdatas_mtx);
 	return ret;
 }
-#ifdef JEMALLOC_JET
-#undef prof_dump_header
-#define prof_dump_header JEMALLOC_N(prof_dump_header)
-prof_dump_header_t *prof_dump_header = JEMALLOC_N(prof_dump_header_impl);
-#endif
+prof_dump_header_t *JET_MUTABLE prof_dump_header = prof_dump_header_impl;
 
 static bool
 prof_dump_gctx(tsdn_t *tsdn, bool propagate_err, prof_gctx_t *gctx,
@@ -1414,7 +1679,15 @@ prof_open_maps(const char *format, ...) {
 	va_start(ap, format);
 	malloc_vsnprintf(filename, sizeof(filename), format, ap);
 	va_end(ap);
+
+#if defined(O_CLOEXEC)
+	mfd = open(filename, O_RDONLY | O_CLOEXEC);
+#else
 	mfd = open(filename, O_RDONLY);
+	if (mfd != -1) {
+		fcntl(mfd, F_SETFD, fcntl(mfd, F_GETFD) | FD_CLOEXEC);
+	}
+#endif
 
 	return mfd;
 }
@@ -1468,8 +1741,9 @@ prof_dump_maps(bool propagate_err) {
 					goto label_return;
 				}
 			}
-			nread = read(mfd, &prof_dump_buf[prof_dump_buf_end],
-			    PROF_DUMP_BUFSIZE - prof_dump_buf_end);
+			nread = malloc_read_fd(mfd,
+			    &prof_dump_buf[prof_dump_buf_end], PROF_DUMP_BUFSIZE
+			    - prof_dump_buf_end);
 		} while (nread > 0);
 	} else {
 		ret = true;
@@ -1630,30 +1904,30 @@ label_write_error:
 static bool
 prof_dump(tsd_t *tsd, bool propagate_err, const char *filename,
     bool leakcheck) {
-	prof_tdata_t *tdata;
-	struct prof_tdata_merge_iter_arg_s prof_tdata_merge_iter_arg;
-	struct prof_gctx_merge_iter_arg_s prof_gctx_merge_iter_arg;
-	struct prof_gctx_dump_iter_arg_s prof_gctx_dump_iter_arg;
-	prof_gctx_tree_t gctxs;
-	bool err;
-
 	cassert(config_prof);
+	assert(tsd_reentrancy_level_get(tsd) == 0);
 
-	tdata = prof_tdata_get(tsd, true);
+	prof_tdata_t * tdata = prof_tdata_get(tsd, true);
 	if (tdata == NULL) {
 		return true;
 	}
 
+	pre_reentrancy(tsd, NULL);
 	malloc_mutex_lock(tsd_tsdn(tsd), &prof_dump_mtx);
 
+	prof_gctx_tree_t gctxs;
+	struct prof_tdata_merge_iter_arg_s prof_tdata_merge_iter_arg;
+	struct prof_gctx_merge_iter_arg_s prof_gctx_merge_iter_arg;
+	struct prof_gctx_dump_iter_arg_s prof_gctx_dump_iter_arg;
 	prof_dump_prep(tsd, tdata, &prof_tdata_merge_iter_arg,
 	    &prof_gctx_merge_iter_arg, &gctxs);
-	err = prof_dump_file(tsd, propagate_err, filename, leakcheck, tdata,
+	bool err = prof_dump_file(tsd, propagate_err, filename, leakcheck, tdata,
 	    &prof_tdata_merge_iter_arg, &prof_gctx_merge_iter_arg,
 	    &prof_gctx_dump_iter_arg, &gctxs);
 	prof_gctx_finish(tsd, &gctxs);
 
 	malloc_mutex_unlock(tsd_tsdn(tsd), &prof_dump_mtx);
+	post_reentrancy(tsd);
 
 	if (err) {
 		return true;
@@ -1746,6 +2020,7 @@ prof_fdump(void) {
 		return;
 	}
 	tsd = tsd_fetch();
+	assert(tsd_reentrancy_level_get(tsd) == 0);
 
 	malloc_mutex_lock(tsd_tsdn(tsd), &prof_dump_seq_mtx);
 	prof_dump_filename(filename, 'f', VSEQ_INVALID);
@@ -1759,11 +2034,13 @@ prof_accum_init(tsdn_t *tsdn, prof_accum_t *prof_accum) {
 
 #ifndef JEMALLOC_ATOMIC_U64
 	if (malloc_mutex_init(&prof_accum->mtx, "prof_accum",
-	    WITNESS_RANK_PROF_ACCUM)) {
+	    WITNESS_RANK_PROF_ACCUM, malloc_mutex_rank_exclusive)) {
 		return true;
 	}
-#endif
 	prof_accum->accumbytes = 0;
+#else
+	atomic_store_u64(&prof_accum->accumbytes, 0, ATOMIC_RELAXED);
+#endif
 	return false;
 }
 
@@ -1774,10 +2051,14 @@ prof_idump(tsdn_t *tsdn) {
 
 	cassert(config_prof);
 
-	if (!prof_booted || tsdn_null(tsdn)) {
+	if (!prof_booted || tsdn_null(tsdn) || !prof_active_get_unlocked()) {
 		return;
 	}
 	tsd = tsdn_tsd(tsdn);
+	if (tsd_reentrancy_level_get(tsd) > 0) {
+		return;
+	}
+
 	tdata = prof_tdata_get(tsd, false);
 	if (tdata == NULL) {
 		return;
@@ -1799,14 +2080,13 @@ prof_idump(tsdn_t *tsdn) {
 
 bool
 prof_mdump(tsd_t *tsd, const char *filename) {
-	char filename_buf[DUMP_FILENAME_BUFSIZE];
-
 	cassert(config_prof);
+	assert(tsd_reentrancy_level_get(tsd) == 0);
 
 	if (!opt_prof || !prof_booted) {
 		return true;
 	}
-
+	char filename_buf[DUMP_FILENAME_BUFSIZE];
 	if (filename == NULL) {
 		/* No filename specified, so automatically generate one. */
 		if (opt_prof_prefix[0] == '\0') {
@@ -1828,10 +2108,14 @@ prof_gdump(tsdn_t *tsdn) {
 
 	cassert(config_prof);
 
-	if (!prof_booted || tsdn_null(tsdn)) {
+	if (!prof_booted || tsdn_null(tsdn) || !prof_active_get_unlocked()) {
 		return;
 	}
 	tsd = tsdn_tsd(tsdn);
+	if (tsd_reentrancy_level_get(tsd) > 0) {
+		return;
+	}
+
 	tdata = prof_tdata_get(tsd, false);
 	if (tdata == NULL) {
 		return;
@@ -1873,7 +2157,34 @@ prof_bt_keycomp(const void *k1, const void *k2) {
 	return (memcmp(bt1->vec, bt2->vec, bt1->len * sizeof(void *)) == 0);
 }
 
-JEMALLOC_INLINE_C uint64_t
+static void
+prof_bt_node_hash(const void *key, size_t r_hash[2]) {
+	const prof_bt_node_t *bt_node = (prof_bt_node_t *)key;
+	prof_bt_hash((void *)(&bt_node->bt), r_hash);
+}
+
+static bool
+prof_bt_node_keycomp(const void *k1, const void *k2) {
+	const prof_bt_node_t *bt_node1 = (prof_bt_node_t *)k1;
+	const prof_bt_node_t *bt_node2 = (prof_bt_node_t *)k2;
+	return prof_bt_keycomp((void *)(&bt_node1->bt),
+	    (void *)(&bt_node2->bt));
+}
+
+static void
+prof_thr_node_hash(const void *key, size_t r_hash[2]) {
+	const prof_thr_node_t *thr_node = (prof_thr_node_t *)key;
+	hash(&thr_node->thr_uid, sizeof(uint64_t), 0x94122f35U, r_hash);
+}
+
+static bool
+prof_thr_node_keycomp(const void *k1, const void *k2) {
+	const prof_thr_node_t *thr_node1 = (prof_thr_node_t *)k1;
+	const prof_thr_node_t *thr_node2 = (prof_thr_node_t *)k2;
+	return thr_node1->thr_uid == thr_node2->thr_uid;
+}
+
+static uint64_t
 prof_thr_uid_alloc(tsdn_t *tsdn) {
 	uint64_t thr_uid;
 
@@ -1894,7 +2205,7 @@ prof_tdata_init_impl(tsd_t *tsd, uint64_t thr_uid, uint64_t thr_discrim,
 
 	/* Initialize an empty cache for this thread. */
 	tdata = (prof_tdata_t *)iallocztm(tsd_tsdn(tsd), sizeof(prof_tdata_t),
-	    size2index(sizeof(prof_tdata_t)), false, NULL, true,
+	    sz_size2index(sizeof(prof_tdata_t)), false, NULL, true,
 	    arena_get(TSDN_NULL, 0, true), true);
 	if (tdata == NULL) {
 		return NULL;
@@ -1910,8 +2221,7 @@ prof_tdata_init_impl(tsd_t *tsd, uint64_t thr_uid, uint64_t thr_discrim,
 
 	if (ckh_new(tsd, &tdata->bt2tctx, PROF_CKH_MINITEMS, prof_bt_hash,
 	    prof_bt_keycomp)) {
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), tdata), tdata,
-		    NULL, true, true);
+		idalloctm(tsd_tsdn(tsd), tdata, NULL, NULL, true, true);
 		return NULL;
 	}
 
@@ -1967,12 +2277,11 @@ prof_tdata_destroy_locked(tsd_t *tsd, prof_tdata_t *tdata,
 	assert(prof_tdata_should_destroy_unlocked(tdata, even_if_attached));
 
 	if (tdata->thread_name != NULL) {
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd),
-		    tdata->thread_name), tdata->thread_name, NULL, true, true);
+		idalloctm(tsd_tsdn(tsd), tdata->thread_name, NULL, NULL, true,
+		    true);
 	}
 	ckh_delete(tsd, &tdata->bt2tctx);
-	idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd), tdata), tdata, NULL,
-	    true, true);
+	idalloctm(tsd_tsdn(tsd), tdata, NULL, NULL, true, true);
 }
 
 static void
@@ -2107,6 +2416,368 @@ prof_active_set(tsdn_t *tsdn, bool active) {
 	return prof_active_old;
 }
 
+#ifdef JEMALLOC_JET
+size_t
+prof_log_bt_count(void) {
+	size_t cnt = 0;
+	prof_bt_node_t *node = log_bt_first;
+	while (node != NULL) {
+		cnt++;
+		node = node->next;
+	}
+	return cnt;
+}
+
+size_t
+prof_log_alloc_count(void) {
+	size_t cnt = 0;
+	prof_alloc_node_t *node = log_alloc_first;
+	while (node != NULL) {
+		cnt++;
+		node = node->next;
+	}
+	return cnt;
+}
+
+size_t
+prof_log_thr_count(void) {
+	size_t cnt = 0;
+	prof_thr_node_t *node = log_thr_first;
+	while (node != NULL) {
+		cnt++;
+		node = node->next;
+	}
+	return cnt;
+}
+
+bool
+prof_log_is_logging(void) {
+	return prof_logging_state == prof_logging_state_started;
+}
+
+bool
+prof_log_rep_check(void) {
+	if (prof_logging_state == prof_logging_state_stopped
+	    && log_tables_initialized) {
+		return true;
+	}
+
+	if (log_bt_last != NULL && log_bt_last->next != NULL) {
+		return true;
+	}
+	if (log_thr_last != NULL && log_thr_last->next != NULL) {
+		return true;
+	}
+	if (log_alloc_last != NULL && log_alloc_last->next != NULL) {
+		return true;
+	}
+
+	size_t bt_count = prof_log_bt_count();
+	size_t thr_count = prof_log_thr_count();
+	size_t alloc_count = prof_log_alloc_count();
+
+
+	if (prof_logging_state == prof_logging_state_stopped) {
+		if (bt_count != 0 || thr_count != 0 || alloc_count || 0) {
+			return true;
+		}
+	}
+
+	prof_alloc_node_t *node = log_alloc_first;
+	while (node != NULL) {
+		if (node->alloc_bt_ind >= bt_count) {
+			return true;
+		}
+		if (node->free_bt_ind >= bt_count) {
+			return true;
+		}
+		if (node->alloc_thr_ind >= thr_count) {
+			return true;
+		}
+		if (node->free_thr_ind >= thr_count) {
+			return true;
+		}
+		if (node->alloc_time_ns > node->free_time_ns) {
+			return true;
+		}
+		node = node->next;
+	}
+
+	return false;
+}
+
+void
+prof_log_dummy_set(bool new_value) {
+	prof_log_dummy = new_value;
+}
+#endif
+
+bool
+prof_log_start(tsdn_t *tsdn, const char *filename) {
+	if (!opt_prof || !prof_booted) {
+		return true;
+	}
+
+	bool ret = false;
+	size_t buf_size = PATH_MAX + 1;
+
+	malloc_mutex_lock(tsdn, &log_mtx);
+
+	if (prof_logging_state != prof_logging_state_stopped) {
+		ret = true;
+	} else if (filename == NULL) {
+		/* Make default name. */
+		malloc_snprintf(log_filename, buf_size, "%s.%d.%"FMTu64".json",
+		    opt_prof_prefix, prof_getpid(), log_seq);
+		log_seq++;
+		prof_logging_state = prof_logging_state_started;
+	} else if (strlen(filename) >= buf_size) {
+		ret = true;
+	} else {
+		strcpy(log_filename, filename);
+		prof_logging_state = prof_logging_state_started;
+	}
+
+	if (!ret) {
+		nstime_update(&log_start_timestamp);
+	}
+
+	malloc_mutex_unlock(tsdn, &log_mtx);
+
+	return ret;
+}
+
+/* Used as an atexit function to stop logging on exit. */
+static void
+prof_log_stop_final(void) {
+	tsd_t *tsd = tsd_fetch();
+	prof_log_stop(tsd_tsdn(tsd));
+}
+
+struct prof_emitter_cb_arg_s {
+	int fd;
+	ssize_t ret;
+};
+
+static void
+prof_emitter_write_cb(void *opaque, const char *to_write) {
+	struct prof_emitter_cb_arg_s *arg =
+	    (struct prof_emitter_cb_arg_s *)opaque;
+	size_t bytes = strlen(to_write);
+#ifdef JEMALLOC_JET
+	if (prof_log_dummy) {
+		return;
+	}
+#endif
+	arg->ret = write(arg->fd, (void *)to_write, bytes);
+}
+
+/*
+ * prof_log_emit_{...} goes through the appropriate linked list, emitting each
+ * node to the json and deallocating it.
+ */
+static void
+prof_log_emit_threads(tsd_t *tsd, emitter_t *emitter) {
+	emitter_json_array_kv_begin(emitter, "threads");
+	prof_thr_node_t *thr_node = log_thr_first;
+	prof_thr_node_t *thr_old_node;
+	while (thr_node != NULL) {
+		emitter_json_object_begin(emitter);
+
+		emitter_json_kv(emitter, "thr_uid", emitter_type_uint64,
+		    &thr_node->thr_uid);
+
+		char *thr_name = thr_node->name;
+
+		emitter_json_kv(emitter, "thr_name", emitter_type_string,
+		    &thr_name);
+
+		emitter_json_object_end(emitter);
+		thr_old_node = thr_node;
+		thr_node = thr_node->next;
+		idalloc(tsd, thr_old_node);
+	}
+	emitter_json_array_end(emitter);
+}
+
+static void
+prof_log_emit_traces(tsd_t *tsd, emitter_t *emitter) {
+	emitter_json_array_kv_begin(emitter, "stack_traces");
+	prof_bt_node_t *bt_node = log_bt_first;
+	prof_bt_node_t *bt_old_node;
+	/*
+	 * Calculate how many hex digits we need: twice number of bytes, two for
+	 * "0x", and then one more for terminating '\0'.
+	 */
+	char buf[2 * sizeof(intptr_t) + 3];
+	size_t buf_sz = sizeof(buf);
+	while (bt_node != NULL) {
+		emitter_json_array_begin(emitter);
+		size_t i;
+		for (i = 0; i < bt_node->bt.len; i++) {
+			malloc_snprintf(buf, buf_sz, "%p", bt_node->bt.vec[i]);
+			char *trace_str = buf;
+			emitter_json_value(emitter, emitter_type_string,
+			    &trace_str);
+		}
+		emitter_json_array_end(emitter);
+
+		bt_old_node = bt_node;
+		bt_node = bt_node->next;
+		idalloc(tsd, bt_old_node);
+	}
+	emitter_json_array_end(emitter);
+}
+
+static void
+prof_log_emit_allocs(tsd_t *tsd, emitter_t *emitter) {
+	emitter_json_array_kv_begin(emitter, "allocations");
+	prof_alloc_node_t *alloc_node = log_alloc_first;
+	prof_alloc_node_t *alloc_old_node;
+	while (alloc_node != NULL) {
+		emitter_json_object_begin(emitter);
+
+		emitter_json_kv(emitter, "alloc_thread", emitter_type_size,
+		    &alloc_node->alloc_thr_ind);
+
+		emitter_json_kv(emitter, "free_thread", emitter_type_size,
+		    &alloc_node->free_thr_ind);
+
+		emitter_json_kv(emitter, "alloc_trace", emitter_type_size,
+		    &alloc_node->alloc_bt_ind);
+
+		emitter_json_kv(emitter, "free_trace", emitter_type_size,
+		    &alloc_node->free_bt_ind);
+
+		emitter_json_kv(emitter, "alloc_timestamp",
+		    emitter_type_uint64, &alloc_node->alloc_time_ns);
+
+		emitter_json_kv(emitter, "free_timestamp", emitter_type_uint64,
+		    &alloc_node->free_time_ns);
+
+		emitter_json_kv(emitter, "usize", emitter_type_uint64,
+		    &alloc_node->usize);
+
+		emitter_json_object_end(emitter);
+
+		alloc_old_node = alloc_node;
+		alloc_node = alloc_node->next;
+		idalloc(tsd, alloc_old_node);
+	}
+	emitter_json_array_end(emitter);
+}
+
+static void
+prof_log_emit_metadata(emitter_t *emitter) {
+	emitter_json_object_kv_begin(emitter, "info");
+
+	nstime_t now = NSTIME_ZERO_INITIALIZER;
+
+	nstime_update(&now);
+	uint64_t ns = nstime_ns(&now) - nstime_ns(&log_start_timestamp);
+	emitter_json_kv(emitter, "duration", emitter_type_uint64, &ns);
+
+	char *vers = JEMALLOC_VERSION;
+	emitter_json_kv(emitter, "version",
+	    emitter_type_string, &vers);
+
+	emitter_json_kv(emitter, "lg_sample_rate",
+	    emitter_type_int, &lg_prof_sample);
+
+	int pid = prof_getpid();
+	emitter_json_kv(emitter, "pid", emitter_type_int, &pid);
+
+	emitter_json_object_end(emitter);
+}
+
+
+bool
+prof_log_stop(tsdn_t *tsdn) {
+	if (!opt_prof || !prof_booted) {
+		return true;
+	}
+
+	tsd_t *tsd = tsdn_tsd(tsdn);
+	malloc_mutex_lock(tsdn, &log_mtx);
+
+	if (prof_logging_state != prof_logging_state_started) {
+		malloc_mutex_unlock(tsdn, &log_mtx);
+		return true;
+	}
+
+	/*
+	 * Set the state to dumping. We'll set it to stopped when we're done.
+	 * Since other threads won't be able to start/stop/log when the state is
+	 * dumping, we don't have to hold the lock during the whole method.
+	 */
+	prof_logging_state = prof_logging_state_dumping;
+	malloc_mutex_unlock(tsdn, &log_mtx);
+
+
+	emitter_t emitter;
+
+	/* Create a file. */
+
+	int fd;
+#ifdef JEMALLOC_JET
+	if (prof_log_dummy) {
+		fd = 0;
+	} else {
+		fd = creat(log_filename, 0644);
+	}
+#else
+	fd = creat(log_filename, 0644);
+#endif
+
+	if (fd == -1) {
+		malloc_printf("<jemalloc>: creat() for log file \"%s\" "
+			      " failed with %d\n", log_filename, errno);
+		if (opt_abort) {
+			abort();
+		}
+		return true;
+	}
+
+	/* Emit to json. */
+	struct prof_emitter_cb_arg_s arg;
+	arg.fd = fd;
+	emitter_init(&emitter, emitter_output_json, &prof_emitter_write_cb,
+	    (void *)(&arg));
+
+	emitter_json_object_begin(&emitter);
+	prof_log_emit_metadata(&emitter);
+	prof_log_emit_threads(tsd, &emitter);
+	prof_log_emit_traces(tsd, &emitter);
+	prof_log_emit_allocs(tsd, &emitter);
+	emitter_json_object_end(&emitter);
+
+	/* Reset global state. */
+	if (log_tables_initialized) {
+		ckh_delete(tsd, &log_bt_node_set);
+		ckh_delete(tsd, &log_thr_node_set);
+	}
+	log_tables_initialized = false;
+	log_bt_index = 0;
+	log_thr_index = 0;
+	log_bt_first = NULL;
+	log_bt_last = NULL;
+	log_thr_first = NULL;
+	log_thr_last = NULL;
+	log_alloc_first = NULL;
+	log_alloc_last = NULL;
+
+	malloc_mutex_lock(tsdn, &log_mtx);
+	prof_logging_state = prof_logging_state_stopped;
+	malloc_mutex_unlock(tsdn, &log_mtx);
+
+#ifdef JEMALLOC_JET
+	if (prof_log_dummy) {
+		return false;
+	}
+#endif
+	return close(fd);
+}
+
 const char *
 prof_thread_name_get(tsd_t *tsd) {
 	prof_tdata_t *tdata;
@@ -2132,7 +2803,7 @@ prof_thread_name_alloc(tsdn_t *tsdn, const char *thread_name) {
 		return "";
 	}
 
-	ret = iallocztm(tsdn, size, size2index(size), false, NULL, true,
+	ret = iallocztm(tsdn, size, sz_size2index(size), false, NULL, true,
 	    arena_get(TSDN_NULL, 0, true), true);
 	if (ret == NULL) {
 		return NULL;
@@ -2169,8 +2840,8 @@ prof_thread_name_set(tsd_t *tsd, const char *thread_name) {
 	}
 
 	if (tdata->thread_name != NULL) {
-		idalloctm(tsd_tsdn(tsd), iealloc(tsd_tsdn(tsd),
-		    tdata->thread_name), tdata->thread_name, NULL, true, true);
+		idalloctm(tsd_tsdn(tsd), tdata->thread_name, NULL, NULL, true,
+		    true);
 		tdata->thread_name = NULL;
 	}
 	if (strlen(s) > 0) {
@@ -2287,20 +2958,21 @@ prof_boot2(tsd_t *tsd) {
 
 		prof_active = opt_prof_active;
 		if (malloc_mutex_init(&prof_active_mtx, "prof_active",
-		    WITNESS_RANK_PROF_ACTIVE)) {
+		    WITNESS_RANK_PROF_ACTIVE, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
 		prof_gdump_val = opt_prof_gdump;
 		if (malloc_mutex_init(&prof_gdump_mtx, "prof_gdump",
-		    WITNESS_RANK_PROF_GDUMP)) {
+		    WITNESS_RANK_PROF_GDUMP, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
 		prof_thread_active_init = opt_prof_thread_active_init;
 		if (malloc_mutex_init(&prof_thread_active_init_mtx,
 		    "prof_thread_active_init",
-		    WITNESS_RANK_PROF_THREAD_ACTIVE_INIT)) {
+		    WITNESS_RANK_PROF_THREAD_ACTIVE_INIT,
+		    malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
@@ -2309,28 +2981,28 @@ prof_boot2(tsd_t *tsd) {
 			return true;
 		}
 		if (malloc_mutex_init(&bt2gctx_mtx, "prof_bt2gctx",
-		    WITNESS_RANK_PROF_BT2GCTX)) {
+		    WITNESS_RANK_PROF_BT2GCTX, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
 		tdata_tree_new(&tdatas);
 		if (malloc_mutex_init(&tdatas_mtx, "prof_tdatas",
-		    WITNESS_RANK_PROF_TDATAS)) {
+		    WITNESS_RANK_PROF_TDATAS, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
 		next_thr_uid = 0;
 		if (malloc_mutex_init(&next_thr_uid_mtx, "prof_next_thr_uid",
-		    WITNESS_RANK_PROF_NEXT_THR_UID)) {
+		    WITNESS_RANK_PROF_NEXT_THR_UID, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
 		if (malloc_mutex_init(&prof_dump_seq_mtx, "prof_dump_seq",
-		    WITNESS_RANK_PROF_DUMP_SEQ)) {
+		    WITNESS_RANK_PROF_DUMP_SEQ, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 		if (malloc_mutex_init(&prof_dump_mtx, "prof_dump",
-		    WITNESS_RANK_PROF_DUMP)) {
+		    WITNESS_RANK_PROF_DUMP, malloc_mutex_rank_exclusive)) {
 			return true;
 		}
 
@@ -2342,6 +3014,35 @@ prof_boot2(tsd_t *tsd) {
 			}
 		}
 
+		if (opt_prof_log) {
+			prof_log_start(tsd_tsdn(tsd), NULL);
+		}
+
+		if (atexit(prof_log_stop_final) != 0) {
+			malloc_write("<jemalloc>: Error in atexit() "
+				     "for logging\n");
+			if (opt_abort) {
+				abort();
+			}
+		}
+
+		if (malloc_mutex_init(&log_mtx, "prof_log",
+		    WITNESS_RANK_PROF_LOG, malloc_mutex_rank_exclusive)) {
+			return true;
+		}
+
+		if (ckh_new(tsd, &log_bt_node_set, PROF_CKH_MINITEMS,
+		    prof_bt_node_hash, prof_bt_node_keycomp)) {
+			return true;
+		}
+
+		if (ckh_new(tsd, &log_thr_node_set, PROF_CKH_MINITEMS,
+		    prof_thr_node_hash, prof_thr_node_keycomp)) {
+			return true;
+		}
+
+		log_tables_initialized = true;
+
 		gctx_locks = (malloc_mutex_t *)base_alloc(tsd_tsdn(tsd),
 		    b0get(), PROF_NCTX_LOCKS * sizeof(malloc_mutex_t),
 		    CACHELINE);
@@ -2350,7 +3051,8 @@ prof_boot2(tsd_t *tsd) {
 		}
 		for (i = 0; i < PROF_NCTX_LOCKS; i++) {
 			if (malloc_mutex_init(&gctx_locks[i], "prof_gctx",
-			    WITNESS_RANK_PROF_GCTX)) {
+			    WITNESS_RANK_PROF_GCTX,
+			    malloc_mutex_rank_exclusive)) {
 				return true;
 			}
 		}
@@ -2363,20 +3065,19 @@ prof_boot2(tsd_t *tsd) {
 		}
 		for (i = 0; i < PROF_NTDATA_LOCKS; i++) {
 			if (malloc_mutex_init(&tdata_locks[i], "prof_tdata",
-			    WITNESS_RANK_PROF_TDATA)) {
+			    WITNESS_RANK_PROF_TDATA,
+			    malloc_mutex_rank_exclusive)) {
 				return true;
 			}
 		}
-	}
-
 #ifdef JEMALLOC_PROF_LIBGCC
-	/*
-	 * Cause the backtracing machinery to allocate its internal state
-	 * before enabling profiling.
-	 */
-	_Unwind_Backtrace(prof_unwind_init_callback, NULL);
+		/*
+		 * Cause the backtracing machinery to allocate its internal
+		 * state before enabling profiling.
+		 */
+		_Unwind_Backtrace(prof_unwind_init_callback, NULL);
 #endif
-
+	}
 	prof_booted = true;
 
 	return false;

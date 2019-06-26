@@ -131,8 +131,8 @@ static bool IsDebuggerAttached(void) {    // only works under linux, probably
 
 // This is the default if you don't link in -lprofiler
 extern "C" {
-ATTRIBUTE_WEAK PERFTOOLS_DLL_DECL bool ProfilingIsEnabledForAllThreads();
-bool ProfilingIsEnabledForAllThreads() { return false; }
+ATTRIBUTE_WEAK PERFTOOLS_DLL_DECL int ProfilingIsEnabledForAllThreads();
+int ProfilingIsEnabledForAllThreads() { return false; }
 }
 
 //----------------------------------------------------------------------
@@ -495,7 +495,7 @@ class InitThreadDisableCounter {
   InitThreadDisableCounter() {
     perftools_pthread_key_create(&thread_disable_counter_key, NULL);
     // Set up the main thread's value, which we have a special variable for.
-    void* p = (void*)main_thread_counter;   // store the counter directly
+    void* p = (void*)(intptr_t)main_thread_counter;   // store the counter directly
     perftools_pthread_setspecific(thread_disable_counter_key, p);
     use_main_thread_counter = false;
   }

@@ -70,11 +70,11 @@ class GCCToolchain(toolchain.Toolchain):
       self.cflags += self.cwarnflags
     self.cxxflags = list(self.cflags)
 
-    self.cflags += ['-std=c11']
+    self.cflags += ['-std=gnu11']
     if self.target.is_macos() or self.target.is_ios():
-      self.cxxflags += ['-std=c++14', '-stdlib=libc++']
+      self.cxxflags += ['-std=c++17', '-stdlib=libc++']
     else:
-      self.cxxflags += ['-std=gnu++14']
+      self.cxxflags += ['-std=gnu++17']
 
     #Overrides
     self.objext = '.o'
@@ -259,8 +259,12 @@ class GCCToolchain(toolchain.Toolchain):
     cconfigflags = self.make_cconfigflags(config, targettype)
     if cconfigflags != []:
       localvariables += [('cconfigflags', cconfigflags)]
+    cmoreflags = []
     if 'defines' in variables:
-      localvariables += [('cmoreflags', ['-D' + define for define in variables['defines']])]
+      cmoreflags += ['-D' + define for define in variables['defines']]
+    if 'cflags' in variables:
+      cmoreflags += ['' + flag for flag in variables['cflags']]
+    localvariables += [('cmoreflags', cmoreflags)]
     return localvariables
 
   def ar_variables(self, config, arch, targettype, variables):

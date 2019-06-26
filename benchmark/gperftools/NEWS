@@ -1,3 +1,282 @@
+== 29 Apr 2018 ==
+gperftools 2.7 is out!
+
+Few people contributed minor, but important fixes since rc.
+
+Changes:
+
+* bug in span stats printing introduced by new scalable page heap
+  change was fixed.
+
+* Christoph Müllner has contributed couple warnings fixes and initial
+  support for aarch64_ilp32 architecture.
+
+* Ben Dang contributed documentation fix for heap checker.
+
+* Fabrice Fontaine contributed fixed for linking benchmarks with
+  --disable-static.
+
+* Holy Wu has added sized deallocation unit tests.
+
+* Holy Wu has enabled support of sized deallocation (c++14) on recent
+  MSVC.
+
+* Holy Wu has fixed MSVC build in WIN32_OVERRIDE_ALLOCATORS mode. This
+  closed issue #716.
+
+* Holy Wu has contributed cleanup of config.h used on windows.
+
+* Mao Huang has contributed couple simple tcmalloc changes from
+  chromium code base. Making our tcmalloc forks a tiny bit closer.
+
+* issue #946 that caused compilation failures on some Linux clang
+  installations has been fixed. Much thanks to github user htuch for
+  helping to diagnose issue and proposing a fix.
+
+* Tulio Magno Quites Machado Filho has contributed build-time fix for
+  PPC (for problem introduced in one of commits since RC).
+
+== 18 Mar 2018 ==
+gperftools 2.7rc is out!
+
+Changes:
+
+* Most notable change in this release is that very large allocations
+  (>1MiB) are now handled be O(log n) implementation. This is
+  contributed by Todd Lipcon based on earlier work by Aliaksei
+  Kandratsenka and James Golick. Special thanks to Alexey Serbin for
+  contributing OSX fix for that commit.
+
+* detection of sized deallocation support is improved. Which should
+  fix another set of issues building on OSX. Much thanks to Alexey
+  Serbin for reporting the issue, suggesting a fix and verifying it.
+
+* Todd Lipcon made a change to extend page heaps freelists to 1 MiB
+  (up from 1MiB - 8KiB). This may help a little for some workloads.
+
+* Ishan Arora contributed typo fix to docs
+
+== 9 Dec 2017 ==
+gperftools 2.6.3 is out!
+
+Just two fixes were made in this release:
+
+* Stephan Zuercher has contributed a build fix for some recent XCode
+  versions. See issue #942 for more details.
+
+* assertion failure on some windows builds introduced by 2.6.2 was
+  fixed. Thanks to github user nkeemik for reporting it and testing
+  fix. See issue #944 for more details.
+
+== 30 Nov 2017 ==
+gperftools 2.6.2 is out!
+
+Most notable change is recently added support for C++17 over-aligned
+allocation operators contributed by Andrey Semashev. I've extended his
+implemention to have roughly same performance as malloc/new. This
+release also has native support for C11 aligned_alloc.
+
+Rest is mostly bug fixes:
+
+* Jianbo Yang has contributed a fix for potentially severe data race
+  introduced by malloc fast-path work in gperftools 2.6. This race
+  could cause occasional violation of total thread cache size
+  constraint. See issue #929 for more details.
+
+* Correct behavior in out-of-memory condition in fast-path cases was
+  restored. This was another bug introduced by fast-path optimization
+  in gperftools 2.6 which caused operator new to silently return NULL
+  instead of doing correct C++ OOM handling (calling new_handler and
+  throwing bad_alloc).
+
+* Khem Raj has contributed couple build fixes for newer glibcs (ucontext_t vs
+  struct ucontext and loff_t definition)
+
+* Piotr Sikora has contributed build fix for OSX (not building unwind
+  benchmark). This was issue #910 (thanks to Yuriy Solovyov for
+  reporting it).
+
+* Dorin Lazăr has contributed fix for compiler warning
+
+* issue #912 (occasional deadlocking calling getenv too early on
+  windows) was fixed. Thanks to github user shangcangriluo for
+  reporting it.
+
+* Couple earlier lsan-related commits still causing occasional issues
+  linking on OSX has been reverted. See issue #901.
+
+* Volodimir Krylov has contributed GetProgramInvocationName for FreeBSD
+
+* changsu lee has contributed couple minor correctness fixes (missing
+  va_end() and missing free() call in rarely executed Symbolize path)
+
+* Andrew C. Morrow has contributed some more page heap stats. See issue
+  #935.
+
+* some cases of built-time warnings from various gcc/clang versions
+  about throw() declarations have been fixes.
+
+== 9 July 2017 ==
+
+gperftools 2.6.1 is out! This is mostly bug-fixes release.
+
+* issue #901: build issue on OSX introduced in last-time commit in 2.6
+  was fixed (contributed by Francis Ricci)
+
+* tcmalloc_minimal now works on 32-bit ABI of mips64. This is issue
+  #845. Much thanks to Adhemerval Zanella and github user mtone.
+
+* Romain Geissler contributed build fix for -std=c++17. This is pull
+  request #897.
+
+* As part of fixing issue #904, tcmalloc atfork handler is now
+  installed early. This should fix slight chance of hitting deadlocks
+  at fork in some cases.
+
+== 4 July 2017 ==
+
+gperftools 2.6 is out!
+
+* Kim Gräsman contributed documentation update for HEAPPROFILESIGNAL
+  environment variable
+
+* KernelMaker contributed fix for population of min_object_size field
+  returned by MallocExtension::GetFreeListSizes
+
+* commit 8c3dc52fcfe0 "issue-654: [pprof] handle split text segments"
+  was reverted. Some OSX users reported issues with this commit. Given
+  our pprof implementation is strongly deprecated it is best to drop
+  recently introduced features rather than breaking it badly.
+
+* Francis Ricci contributed improvement for interaction with leak
+  sanitizer.
+
+== 22 May 2017 ==
+
+gperftools 2.6rc4 is out!
+
+Dynamic sized delete is disabled by default again. There is no hope of
+it working with eager dynamic symbols resolution (-z now linker
+flag). More details in
+https://bugzilla.redhat.com/show_bug.cgi?id=1452813
+
+== 21 May 2017 ==
+
+gperftools 2.6rc3 is out!
+
+gperftools compilation on older systems (e.g. rhel 5) was fixed. This
+was originally reported in github issue #888.
+
+== 14 May 2017 ==
+
+gperftools 2.6rc2 is out!
+
+Just 2 small fixes on top of 2.6rc. Particularly, Rajalakshmi
+Srinivasaraghavan contributed build fix for ppc32.
+
+== 14 May 2017 ==
+
+gperftools 2.6rc is out!
+
+Highlights of this release are performance work on malloc fast-path
+and support for more modern visual studio runtimes, and deprecation of
+bundled pprof. Another significant performance-affecting changes are
+reverting central free list transfer batch size back to 32 and
+disabling of aggressive decommit mode by default.
+
+Note, while we still ship perl implementation of pprof, everyone is
+strongly advised to use golang reimplementation of pprof from
+https://github.com/google/pprof.
+
+Here are notable changes in more details (and see ChangeLog for full
+details):
+
+* a bunch of performance tweaks to tcmalloc fast-path were
+  merged. This speeds up critical path of tcmalloc by few tens of
+  %. Well tuned and allocation-heavy programs should see substantial
+  performance boost (should apply to all modern elf platforms). This
+  is based on Google-internal tcmalloc changes for fast-path (with
+  obvious exception of lacking per-cpu mode, of course). Original
+  changes were made by Aliaksei Kandratsenka. And Andrew Hunter,
+  Dmitry Vyukov and Sanjay Ghemawat contributed with reviews and
+  discussions.
+
+* Architectures with 48 bits address space (x86-64 and aarch64) now
+  use faster 2 level page map. This was ported from Google-internal
+  change by Sanjay Ghemawat.
+
+* Default value of TCMALLOC_TRANSFER_NUM_OBJ was returned back to
+  32. Larger values have been found to hurt certain programs (but help
+  some other benchmarks). Value can still be tweaked at run time via
+  environment variable.
+
+* tcmalloc aggressive decommit mode is now disabled by default
+  again. It was found to degrade performance of certain tensorflow
+  benchmarks. Users who prefer smaller heap over small performance win
+  can still set environment variable TCMALLOC_AGGRESSIVE_DECOMMIT=t.
+
+* runtime switchable sized delete support has be fixed and re-enabled
+  (on GNU/Linux). Programs that use C++ 14 or later that use sized
+  delete can again be sped up by setting environment variable
+  TCMALLOC_ENABLE_SIZED_DELETE=t. Support for enabling sized
+  deallication support at compile-time is still present, of course.
+
+* tcmalloc now explicitly avoids use of MADV_FREE on Linux, unless
+  TCMALLOC_USE_MADV_FREE is defined at compile time. This is because
+  performance impact of MADV_FREE is not well known. Original issue
+  #780 raised by Mathias Stearn.
+
+* issue #786 with occasional deadlocks in stack trace capturing via
+  libunwind was fixed. It was originally reported as Ceph issue:
+  http://tracker.ceph.com/issues/13522
+
+* ChangeLog is now automatically generated from git log. Old ChangeLog
+  is now ChangeLog.old.
+
+* tcmalloc now provides implementation of nallocx. Function was
+  originally introduced by jemalloc and can be used to return real
+  allocation size given allocation request size. This is ported from
+  Google-internal tcmalloc change contributed by Dmitry Vyukov.
+
+* issue #843 which made tcmalloc crash when used with erlang runtime
+  was fixed.
+
+* issue #839 which caused tcmalloc's aggressive decommit mode to
+  degrade performance in some corner cases was fixed.
+
+* Bryan Chan contributed support for 31-bit s390.
+
+* Brian Silverman contributed compilation fix for 32-bit ARMs
+
+* Issue #817 that was causing tcmalloc to fail on windows 10 and
+  later, as well as on recent msvc was fixed. We now patch _free_base
+  as well.
+
+* a bunch of minor documentaion/typos fixes by: Mike Gaffney
+  <mike@uberu.com>, iivlev <iivlev@productengine.com>, savefromgoogle
+  <savefromgoogle@users.noreply.github.com>, John McDole
+  <jtmcdole@gmail.com>, zmertens <zmertens@asu.edu>, Kirill Müller
+  <krlmlr@mailbox.org>, Eugene <n.eugene536@gmail.com>, Ola Olsson
+  <ola1olsson@gmail.com>, Mostyn Bramley-Moore <mostynb@opera.com>
+
+* Tulio Magno Quites Machado Filho has contributed removal of
+  deprecated glibc malloc hooks.
+
+* Issue #827 that caused intercepting malloc on osx 10.12 to fail was
+  fixed, by copying fix made by Mike Hommey to jemalloc. Much thanks
+  to Koichi Shiraishi and David Ribeiro Alves for reporting it and
+  testing fix.
+
+* Aman Gupta and Kenton Varda contributed minor fixes to pprof (but
+  note again that pprof is deprecated)
+
+* Ryan Macnak contributed compilation fix for aarch64
+
+* Francis Ricci has fixed unaligned memory access in debug allocator
+
+* TCMALLOC_PAGE_FENCE_NEVER_RECLAIM now actually works thanks to
+  contribution by Andrew Morrow.
+
 == 12 Mar 2016 ==
 
 gperftools 2.5 is out!
