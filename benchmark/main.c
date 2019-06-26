@@ -547,6 +547,19 @@ benchmark_worker(void* argptr) {
 		iter_ticks_elapsed += ticks_elapsed;
 		arg->ticks += ticks_elapsed;
 
+		thread_sleep(10);
+
+		foreign = get_cross_thread_memory(&arg->foreign);
+		while (foreign) {
+			for (iop = 0; iop < foreign->count; ++iop)
+				benchmark_free(foreign->pointers[iop]);
+
+			void* next = foreign->next;
+			benchmark_free(foreign->pointers);
+			benchmark_free(foreign);
+			foreign = next;
+		}
+
 		printf(".");
 		fflush(stdout);
 
