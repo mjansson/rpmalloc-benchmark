@@ -162,7 +162,7 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS=1;NDEBUG=1;PERFTOOLS_DLL_DECL=</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS=1;NDEBUG=1;NO_TCMALLOC_SAMPLES;NO_HEAP_CHECK;PERFTOOLS_DLL_DECL=</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\..\test;..\..\benchmark;..\..\benchmark\gperftools\src;..\..\benchmark\gperftools\src\windows</AdditionalIncludeDirectories>
       <ExceptionHandling>Async</ExceptionHandling>
       <BasicRuntimeChecks>Default</BasicRuntimeChecks>
@@ -229,7 +229,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>false</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS=1;NDEBUG=1;PERFTOOLS_DLL_DECL=</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS=1;NDEBUG=1;NO_TCMALLOC_SAMPLES;NO_HEAP_CHECK;PERFTOOLS_DLL_DECL=</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\..\test;..\..\benchmark;..\..\benchmark\gperftools\src;..\..\benchmark\gperftools\src\windows</AdditionalIncludeDirectories>
       <ExceptionHandling>Async</ExceptionHandling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>

@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 @rem set string=rpmalloc,tcmalloc,crt,hoard,nedmalloc
-set string=rpmalloc
+set string=rpmalloc,tcmalloc
 :again
 for /f "tokens=1* delims=," %%x in ("%string%") do (
 	set executable=bin\windows\release\x86-64\benchmark-%%x.exe
