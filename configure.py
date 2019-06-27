@@ -17,8 +17,7 @@ toolchain = generator.toolchain
 variables = {'defines': ['NDEBUG=1'], 'cflags': ['-fno-builtin-malloc']}
 
 def merge_variables(a, b):
-    return dict(a.items() + b.items() +
-        [(k, a[k] + b[k]) for k in set(b) & set(a)])
+	return {k: v for d in [a, b] for k, v in d.items()}
 
 includepaths = ['test', 'benchmark']
 test_lib = generator.lib(module = 'test', sources = ['thread.c', 'timer.c'], includepaths = includepaths, variables = variables)
