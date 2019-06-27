@@ -32,7 +32,8 @@ benchmark_thread_finalize(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return alignment ? je_memalign(alignment, size) : je_malloc(size);
+	//return alignment ? je_memalign(alignment, size) : je_malloc(size);
+	return je_malloc(size);
 }
 
 void

@@ -29,6 +29,7 @@ benchmark_thread_finalize(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
+	/*
 #ifdef _WIN32
 	return _aligned_malloc(size, alignment ? alignment : 4);
 #elif defined(__APPLE__)
@@ -41,15 +42,20 @@ benchmark_malloc(size_t alignment, size_t size) {
 #else
 	return alignment ? memalign(alignment, size) : malloc(size);
 #endif
+	*/
+	return malloc(size);
 }
 
 extern void
 benchmark_free(void* ptr) {
+	/*
 #ifdef _WIN32
 	_aligned_free(ptr);
 #else
 	free(ptr);
 #endif
+	*/
+	free(ptr);
 }
 
 const char*

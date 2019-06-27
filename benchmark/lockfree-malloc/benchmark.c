@@ -31,7 +31,8 @@ benchmark_thread_collect(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return alignment ? __wrap_memalign(alignment, size) : __wrap_malloc(size, 0);
+	//return alignment ? __wrap_memalign(alignment, size) : __wrap_malloc(size, 0);
+	return __wrap_malloc(size, 0);
 }
 
 extern void

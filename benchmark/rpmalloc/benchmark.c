@@ -32,7 +32,8 @@ benchmark_thread_collect(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return rpmemalign(alignment, size);
+	//return rpmemalign(alignment, size);
+	return rpmalloc(size);
 }
 
 extern void

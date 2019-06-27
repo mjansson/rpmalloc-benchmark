@@ -24,7 +24,8 @@ benchmark_thread_finalize(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return alignment ? nedmemalign(alignment, size) : nedmalloc(size);
+	//return alignment ? nedmemalign(alignment, size) : nedmalloc(size);
+	return nedmalloc(size);
 }
 
 extern void

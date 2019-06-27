@@ -31,7 +31,8 @@ benchmark_thread_collect(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return alignment ? bmalloc::api::memalign(alignment, size) : bmalloc::api::malloc(size);
+	//return alignment ? bmalloc::api::memalign(alignment, size) : bmalloc::api::malloc(size);
+	return bmalloc::api::malloc(size);
 }
 
 void

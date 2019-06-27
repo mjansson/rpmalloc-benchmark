@@ -28,7 +28,8 @@ benchmark_thread_collect(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return alignment ? mi_malloc_aligned(size, alignment) : mi_malloc(size);
+	//return alignment ? mi_malloc_aligned(size, alignment) : mi_malloc(size);
+	return mi_malloc(size);
 }
 
 extern void

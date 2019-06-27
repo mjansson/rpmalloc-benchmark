@@ -35,7 +35,7 @@ benchmark_thread_collect(void) {
 
 void*
 benchmark_malloc(size_t alignment, size_t size) {
-	return _sm_malloc(allocator, size, alignment);
+	return _sm_malloc(allocator, size, 0);//alignment);
 }
 
 extern void
