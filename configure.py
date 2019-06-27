@@ -178,6 +178,7 @@ if not target.is_android():
 	supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
 	generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = supermalloc_variables)
 
+#Lockless only seems to build with gcc
 if toolchain.name() == "gcc":
 	lockless_depend_libs = ['benchmark', 'test']
 	if target.is_linux():
@@ -191,3 +192,15 @@ smmallocsources = [
 smmalloc_variables = {'defines': ['_M_X64=1'], 'runtime': 'c++'}
 smmalloc_depend_libs = ['benchmark', 'test']
 generator.bin(module = 'smmalloc', sources = ['benchmark.cpp'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = smmalloc_variables)
+
+mimallocsources = [
+	'stats.c', 'os.c', 'segment.c', 'page.c', 'alloc.c', 'alloc-aligned.c',
+    'heap.c', 'options.c', 'init.c'
+]
+mimallocsources = [os.path.join('src', path) for path in mimallocsources]
+mimalloc_variables = {'defines': ['MI_DEBUG=0']}
+mimallocincludepaths = [
+	os.path.join('benchmark', 'mimalloc', 'include')
+]
+mimalloc_depend_libs = ['benchmark', 'test']
+generator.bin(module = 'mimalloc', sources = ['benchmark.c'] + mimallocsources, binname = 'benchmark-mimalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = mimalloc_depend_libs, includepaths = includepaths + mimallocincludepaths, variables = mimalloc_variables)

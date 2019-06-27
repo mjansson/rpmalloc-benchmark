@@ -7,7 +7,7 @@ sudo sh -c "echo 1 > /proc/sys/vm/overcommit_memory"
 sudo sh -c "echo never > /sys/kernel/mm/transparent_hugepage/enabled"
 
 #for name in rpmalloc; do
-for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt ptmalloc3 hoard nedmalloc bmalloc; do
+for name in rpmalloc mimalloc tcmalloc jemalloc crt lockfree-malloc scalloc supermalloc ptmalloc3 hoard nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 0 2 20000 50000 5000 16 1000
@@ -37,7 +37,7 @@ for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt p
 done
 
 #for name in rpmalloc; do
-for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt ptmalloc3 hoard nedmalloc bmalloc; do
+for name in rpmalloc mimalloc tcmalloc jemalloc crt lockfree-malloc scalloc supermalloc ptmalloc3 hoard nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 1 2 20000 50000 5000 16 8000
@@ -67,7 +67,7 @@ for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt p
 done
 
 #for name in rpmalloc; do
-for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt ptmalloc3 hoard nedmalloc bmalloc; do
+for name in rpmalloc mimalloc tcmalloc jemalloc crt lockfree-malloc scalloc supermalloc ptmalloc3 hoard nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 1 2 10000 50000 5000 16 16000
@@ -97,7 +97,7 @@ for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt p
 done
 
 #for name in rpmalloc; do
-for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt ptmalloc3 hoard nedmalloc bmalloc; do
+for name in rpmalloc mimalloc tcmalloc jemalloc crt lockfree-malloc scalloc supermalloc ptmalloc3 hoard nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 2 2 10000 30000 3000 128 64000
@@ -127,7 +127,7 @@ for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt p
 done
 
 #for name in rpmalloc; do
-for name in rpmalloc lockfree-malloc scalloc supermalloc tcmalloc jemalloc crt ptmalloc3 hoard nedmalloc bmalloc; do
+for name in rpmalloc mimalloc tcmalloc jemalloc crt lockfree-malloc scalloc supermalloc ptmalloc3 hoard nedmalloc bmalloc; do
 	executable=bin/$os/release/x86-64/benchmark-$name
 
 	$executable 1 0 2 2 10000 20000 2000 512 160000
