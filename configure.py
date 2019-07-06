@@ -91,7 +91,7 @@ gperftoolsbasesources = [os.path.join('src', 'base', path) for path in gperftool
 gperftoolssources = [
 	'central_freelist.cc', 'common.cc', 'fake_stacktrace_scope.cc', 'internal_logging.cc',
 	'malloc_extension.cc', 'malloc_hook.cc', 'memfs_malloc.cc', 'memory_region_map.cc',
-	'page_heap.cc', 'raw_printer.cc', 'sampler.cc', 'stack_trace_table.cc',
+	'page_heap.cc', 'raw_printer.cc', 'sampler.cc', 'stack_trace_table.cc', 'stacktrace.cc',
 	'static_vars.cc', 'span.cc', 'symbolize.cc', 'tcmalloc.cc', 'thread_cache.cc'
 ]
 if not target.is_windows():
@@ -137,45 +137,48 @@ if not target.is_windows() and not target.is_android():
 	scalloc_depend_libs = ['scalloc', 'benchmark', 'test']
 	generator.bin(module = 'scalloc', sources = ['benchmark.c'], binname = 'benchmark-scalloc', basepath = 'benchmark', implicit_deps = [scalloc_lib, benchmark_lib, test_lib], libs = scalloc_depend_libs, includepaths = includepaths, variables = scalloc_variables)
 
-lockfree_malloc_depend_libs = ['benchmark', 'test']
-if not target.is_android():
-	lockfree_variables = merge_variables({'runtime': 'c++'}, variables)
-	generator.bin(module = 'lockfree-malloc', sources = ['benchmark.c', 'lite-malloc.cpp'], binname = 'benchmark-lockfree-malloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockfree_malloc_depend_libs, includepaths = includepaths, variables = lockfree_variables)
+if not target.is_windows():
+	lockfree_malloc_depend_libs = ['benchmark', 'test']
+	if not target.is_android():
+		lockfree_variables = merge_variables({'runtime': 'c++'}, variables)
+		generator.bin(module = 'lockfree-malloc', sources = ['benchmark.c', 'lite-malloc.cpp'], binname = 'benchmark-lockfree-malloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockfree_malloc_depend_libs, includepaths = includepaths, variables = lockfree_variables)
 
-bmallocincludepaths = [
-	os.path.join('benchmark', 'bmalloc', 'bmalloc')
-]
-bmallocsources = [
-	'AllIsoHeaps.cpp', 'Allocator.cpp', 'AvailableMemory.cpp', 'bmalloc.cpp', 'Cache.cpp', 'CryptoRandom.cpp',
-	'Deallocator.cpp', 'DebugHeap.cpp', 'Environment.cpp', 'FreeList.cpp', 'Gigacage.cpp', 'Heap.cpp',
-	'HeapKind.cpp', 'IsoHeapImpl.cpp', 'IsoPage.cpp', 'IsoSharedHeap.cpp', 'IsoSharedPage.cpp', 'IsoTLS.cpp',
-	'IsoTLSEntry.cpp', 'IsoTLSLayout.cpp', 'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'Mutex.cpp',
-	'ObjectType.cpp', 'PerProcess.cpp', 'PerThread.cpp', 'Scavenger.cpp', 'StaticMutex.cpp', 'VMHeap.cpp'
-]
-if target.is_macos() or target.is_ios():
-	bmallocsources += ['Zone.cpp']
-bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
-if not target.is_android():
-	bmalloc_variables = merge_variables({'runtime': 'c++'}, variables)
-	bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, variables = bmalloc_variables)
-	bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
-	generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = bmalloc_variables)
+if not target.is_windows():
+	bmallocincludepaths = [
+		os.path.join('benchmark', 'bmalloc', 'bmalloc')
+	]
+	bmallocsources = [
+		'AllIsoHeaps.cpp', 'Allocator.cpp', 'AvailableMemory.cpp', 'bmalloc.cpp', 'Cache.cpp', 'CryptoRandom.cpp',
+		'Deallocator.cpp', 'DebugHeap.cpp', 'Environment.cpp', 'FreeList.cpp', 'Gigacage.cpp', 'Heap.cpp',
+		'HeapKind.cpp', 'IsoHeapImpl.cpp', 'IsoPage.cpp', 'IsoSharedHeap.cpp', 'IsoSharedPage.cpp', 'IsoTLS.cpp',
+		'IsoTLSEntry.cpp', 'IsoTLSLayout.cpp', 'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'Mutex.cpp',
+		'ObjectType.cpp', 'PerProcess.cpp', 'PerThread.cpp', 'Scavenger.cpp', 'StaticMutex.cpp', 'VMHeap.cpp'
+	]
+	if target.is_macos() or target.is_ios():
+		bmallocsources += ['Zone.cpp']
+	bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
+	if not target.is_android():
+		bmalloc_variables = merge_variables({'runtime': 'c++'}, variables)
+		bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, variables = bmalloc_variables)
+		bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
+		generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = bmalloc_variables)
 
 #Requires transactional memory for full performance?
-supermallocincludepaths = [
-	os.path.join('benchmark', 'supermalloc', 'src')
-]
-supermallocsources = [
-	'bassert.cc', 'cache.cc', 'env.cc', 'footprint.cc', 'futex_mutex.cc', 'has_tsx.cc', 'huge_malloc.cc',
-	'large_malloc.cc', 'makechunk.cc', 'malloc.cc', 'rng.cc', 'small_malloc.cc', 'stats.cc',
-	'generated_constants.cc'
-]
-supermallocsources = [os.path.join('src', path) for path in supermallocsources]
-if not target.is_android():
-	supermalloc_variables = {'cflags': ['-mrtm'], 'runtime': 'c++', 'defines': ['NDEBUG=1']}
-	supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, variables = supermalloc_variables)
-	supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
-	generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = supermalloc_variables)
+if not target.is_windows():
+	supermallocincludepaths = [
+		os.path.join('benchmark', 'supermalloc', 'src')
+	]
+	supermallocsources = [
+		'bassert.cc', 'cache.cc', 'env.cc', 'footprint.cc', 'futex_mutex.cc', 'has_tsx.cc', 'huge_malloc.cc',
+		'large_malloc.cc', 'makechunk.cc', 'malloc.cc', 'rng.cc', 'small_malloc.cc', 'stats.cc',
+		'generated_constants.cc'
+	]
+	supermallocsources = [os.path.join('src', path) for path in supermallocsources]
+	if not target.is_android():
+		supermalloc_variables = {'cflags': ['-mrtm'], 'runtime': 'c++', 'defines': ['NDEBUG=1']}
+		supermalloc_lib = generator.lib(module = 'supermalloc', sources = supermallocsources, basepath = 'benchmark', includepaths = includepaths + supermallocincludepaths, variables = supermalloc_variables)
+		supermalloc_depend_libs = ['supermalloc', 'benchmark', 'test']
+		generator.bin(module = 'supermalloc', sources = ['benchmark.c'], binname = 'benchmark-supermalloc', basepath = 'benchmark', implicit_deps = [supermalloc_lib, benchmark_lib, test_lib], libs = supermalloc_depend_libs, includepaths = includepaths, variables = supermalloc_variables)
 
 #Lockless only seems to build with gcc
 if toolchain.name() == "gcc":
@@ -184,13 +187,13 @@ if toolchain.name() == "gcc":
 		lockless_variables = merge_variables({'defines': ['USE_PREFIX']}, variables)
 		generator.bin(module = 'lockless', sources = ['benchmark.c', 'll_alloc.c'], binname = 'benchmark-lockless', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = lockless_depend_libs, includepaths = includepaths, variables = lockless_variables)
 
-#smmalloc does not seem to compile on x64
-smmallocsources = [
-	'smmalloc.cpp', 'smmalloc_generic.cpp', 'smmalloc_tls.cpp'
-]
-smmalloc_variables = {'defines': ['_M_X64=1'], 'runtime': 'c++'}
-smmalloc_depend_libs = ['benchmark', 'test']
-generator.bin(module = 'smmalloc', sources = ['benchmark.cpp'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = smmalloc_variables)
+if not target.is_windows():
+	smmallocsources = [
+		'smmalloc.cpp', 'smmalloc_generic.cpp', 'smmalloc_tls.cpp'
+	]
+	smmalloc_variables = {'defines': ['_M_X64=1'], 'runtime': 'c++'}
+	smmalloc_depend_libs = ['benchmark', 'test']
+	generator.bin(module = 'smmalloc', sources = ['benchmark.cpp'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = smmalloc_variables)
 
 mimallocsources = [
 	'stats.c', 'os.c', 'segment.c', 'page.c', 'alloc.c', 'alloc-aligned.c',
