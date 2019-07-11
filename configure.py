@@ -4,6 +4,7 @@
 
 import sys
 import os
+import copy
 
 sys.path.insert(0, os.path.join('build', 'ninja'))
 
@@ -17,7 +18,13 @@ toolchain = generator.toolchain
 variables = {'defines': ['NDEBUG=1'], 'cflags': ['-fno-builtin-malloc']}
 
 def merge_variables(a, b):
-	return {k: v for d in [a, b] for k, v in d.items()}
+	merged = copy.deepcopy(a)
+	for k, v in b.items():
+		if k in merged:
+			merged[k] = list(merged[k]) + list(v)
+		else:
+			merged[k] = v
+	return merged
 
 includepaths = ['test', 'benchmark']
 test_lib = generator.lib(module = 'test', sources = ['thread.c', 'timer.c'], includepaths = includepaths, variables = variables)
@@ -89,9 +96,9 @@ if not target.is_windows():
 	gperftoolsbasesources += ['thread_lister.c']
 gperftoolsbasesources = [os.path.join('src', 'base', path) for path in gperftoolsbasesources]
 gperftoolssources = [
-	'central_freelist.cc', 'common.cc', 'fake_stacktrace_scope.cc', 'internal_logging.cc',
-	'malloc_extension.cc', 'malloc_hook.cc', 'memfs_malloc.cc', 'memory_region_map.cc',
-	'page_heap.cc', 'raw_printer.cc', 'sampler.cc', 'stack_trace_table.cc', 'stacktrace.cc',
+	'central_freelist.cc', 'common.cc', 'internal_logging.cc',
+	'malloc_extension.cc', 'malloc_hook.cc', 'memfs_malloc.cc', 
+	'page_heap.cc', 'sampler.cc', 'stack_trace_table.cc',
 	'static_vars.cc', 'span.cc', 'symbolize.cc', 'tcmalloc.cc', 'thread_cache.cc'
 ]
 if not target.is_windows():
