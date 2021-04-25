@@ -40,11 +40,10 @@
 # error Should only be including malloc_hook_mmap_linux.h on linux systems.
 #endif
 
-#include <unistd.h>
-#include <syscall.h>
-#include <sys/mman.h>
 #include <errno.h>
-#include "base/linux_syscall_support.h"
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 // The x86-32 case and the x86-64 case differ:
 // 32b has a mmap2() syscall, 64b does not.
@@ -56,12 +55,19 @@
     || defined(__PPC64__) \
     || defined(__aarch64__) \
     || (defined(_MIPS_SIM) && (_MIPS_SIM == _ABI64 || _MIPS_SIM == _ABIN32)) \
-    || defined(__s390__)
+    || defined(__s390__) || (defined(__riscv) && __riscv_xlen == 64) \
+    || defined(__e2k__)
 
 static inline void* do_mmap64(void *start, size_t length,
                               int prot, int flags,
                               int fd, off64_t offset) __THROW {
+#if defined(__s390__)
+  long args[6] = { (long)start, (long)length, (long)prot, (long)flags,
+                   (long)fd, (long)offset };
+  return (void*)syscall(SYS_mmap, args);
+#else
   return (void*)syscall(SYS_mmap, start, length, prot, flags, fd, offset);
+#endif
 }
 
 #define MALLOC_HOOK_HAVE_DO_MMAP64 1

@@ -136,16 +136,16 @@
 #include "maybe_emergency_malloc.h"
 
 #if (defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)) && !defined(WIN32_OVERRIDE_ALLOCATORS)
-//# define WIN32_DO_PATCHING 1
+# define WIN32_DO_PATCHING 1
 #endif
 
 // Some windows file somewhere (at least on cygwin) #define's small (!)
 #undef small
 
-using STL_NAMESPACE::max;
-using STL_NAMESPACE::min;
-using STL_NAMESPACE::numeric_limits;
-using STL_NAMESPACE::vector;
+using std::max;
+using std::min;
+using std::numeric_limits;
+using std::vector;
 
 #include "libc_override.h"
 
@@ -163,6 +163,7 @@ using tcmalloc::Static;
 using tcmalloc::ThreadCache;
 
 DECLARE_double(tcmalloc_release_rate);
+DECLARE_int64(tcmalloc_heap_limit_mb);
 
 // Those common architectures are known to be safe w.r.t. aliasing function
 // with "extra" unused args to function with fewer arguments (e.g.
@@ -468,18 +469,25 @@ static void DumpStats(TCMalloc_Printer* out, int level) {
     out->printf("Total size of freelists for per-thread caches,\n");
     out->printf("transfer cache, and central cache, by size class\n");
     out->printf("------------------------------------------------\n");
-    uint64_t cumulative = 0;
+    uint64_t cumulative_bytes = 0;
+    uint64_t cumulative_overhead = 0;
     for (uint32 cl = 0; cl < Static::num_size_classes(); ++cl) {
       if (class_count[cl] > 0) {
         size_t cl_size = Static::sizemap()->ByteSizeForClass(cl);
-        uint64_t class_bytes = class_count[cl] * cl_size;
-        cumulative += class_bytes;
-        out->printf("class %3d [ %8" PRIuS " bytes ] : "
-                "%8" PRIu64 " objs; %5.1f MiB; %5.1f cum MiB\n",
+        const uint64_t class_bytes = class_count[cl] * cl_size;
+        cumulative_bytes += class_bytes;
+        const uint64_t class_overhead =
+            Static::central_cache()[cl].OverheadBytes();
+        cumulative_overhead += class_overhead;
+        out->printf("class %3d [ %8zu bytes ] : "
+                "%8" PRIu64 " objs; %5.1f MiB; %5.1f cum MiB; "
+                "%8.3f overhead MiB; %8.3f cum overhead MiB\n",
                 cl, cl_size,
                 class_count[cl],
                 class_bytes / MiB,
-                cumulative / MiB);
+                cumulative_bytes / MiB,
+                class_overhead / MiB,
+                cumulative_overhead / MiB);
       }
     }
 
@@ -828,6 +836,12 @@ class TCMallocImplementation : public MallocExtension {
       return true;
     }
 
+    if (strcmp(name, "tcmalloc.heap_limit_mb") == 0) {
+      SpinLockHolder l(Static::pageheap_lock());
+      *value = FLAGS_tcmalloc_heap_limit_mb;
+      return true;
+    }
+
     return false;
   }
 
@@ -843,6 +857,12 @@ class TCMallocImplementation : public MallocExtension {
     if (strcmp(name, "tcmalloc.aggressive_memory_decommit") == 0) {
       SpinLockHolder l(Static::pageheap_lock());
       Static::pageheap()->SetAggressiveDecommit(value != 0);
+      return true;
+    }
+
+    if (strcmp(name, "tcmalloc.heap_limit_mb") == 0) {
+      SpinLockHolder l(Static::pageheap_lock());
+      FLAGS_tcmalloc_heap_limit_mb = value;
       return true;
     }
 
@@ -1422,6 +1442,21 @@ static ATTRIBUTE_NOINLINE void do_free_pages(Span* span, void* ptr) {
   Static::pageheap()->Delete(span);
 }
 
+#ifndef NDEBUG
+// note, with sized deletions we have no means to support win32
+// behavior where we detect "not ours" points and delegate them native
+// memory management. This is because nature of sized deletes
+// bypassing addr -> size class checks. So in this validation code we
+// also assume that sized delete is always used with "our" pointers.
+bool ValidateSizeHint(void* ptr, size_t size_hint) {
+  const PageID p = reinterpret_cast<uintptr_t>(ptr) >> kPageShift;
+  Span* span  = Static::pageheap()->GetDescriptor(p);
+  uint32 cl = 0;
+  Static::sizemap()->GetSizeClass(size_hint, &cl);
+  return (span->sizeclass == cl);
+}
+#endif
+
 // Helper for the object deletion (free, delete, etc.).  Inputs:
 //   ptr is object to be freed
 //   invalid_free_fn is a function that gets invoked on certain "bad frees"
@@ -1437,11 +1472,7 @@ void do_free_with_callback(void* ptr,
   const PageID p = reinterpret_cast<uintptr_t>(ptr) >> kPageShift;
   uint32 cl;
 
-#ifndef NO_TCMALLOC_SAMPLES
-  // we only pass size hint when ptr is not page aligned. Which
-  // implies that it must be very small object.
-  ASSERT(!use_hint || size_hint < kPageSize);
-#endif
+  ASSERT(!use_hint || ValidateSizeHint(ptr, size_hint));
 
   if (!use_hint || PREDICT_FALSE(!Static::sizemap()->GetSizeClass(size_hint, &cl))) {
     // if we're in sized delete, but size is too large, no need to

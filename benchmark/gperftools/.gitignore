@@ -89,6 +89,7 @@
 /page_heap_test.exe
 /pagemap_unittest
 /pagemap_unittest.exe
+/pprof-symbolize
 /profile_handler_unittest
 /profiledata_unittest
 /profiler1_unittest
@@ -124,6 +125,10 @@
 /stack_trace_table_test.exe
 /stacktrace_unittest
 /system_alloc_unittest
+/tcm_asserts_unittest
+/tcm_asserts_unittest.exe
+/tcm_min_asserts_unittest
+/tcm_min_asserts_unittest.exe
 /tcmalloc_and_profiler_unittest
 /tcmalloc_both_unittest
 /tcmalloc_debug_unittest

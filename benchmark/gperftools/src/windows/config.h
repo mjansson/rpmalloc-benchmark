@@ -1,3 +1,4 @@
+/* -*- Mode: C++; c-basic-offset: 2; indent-tabs-mode: nil -*- */
 /* A manual version of config.h fit for windows machines.
  *
  * Use of this source code is governed by a BSD-style license that can
@@ -36,12 +37,6 @@
 /* Define to 1 if you have the <asm/ptrace.h> header file. */
 /* #undef HAVE_ASM_PTRACE_H */
 
-/* Define to 1 if compiler supports __builtin_stack_pointer */
-/* #undef HAVE_BUILTIN_STACK_POINTER */
-
-/* Define to 1 if you have the <conflict-signal.h> header file. */
-/* #undef HAVE_CONFLICT_SIGNAL_H */
-
 /* Define to 1 if you have the <cygwin/signal.h> header file. */
 /* #undef HAVE_CYGWIN_SIGNAL_H */
 
@@ -72,10 +67,6 @@
 /* Define to 1 if you have the declaration of `sleep', and to 0 if you don't.
    */
 #define HAVE_DECL_SLEEP 0
-
-/* Define to 1 if you have the declaration of `uname', and to 0 if you don't.
-   */
-#define HAVE_DECL_UNAME 0
 
 /* Define to 1 if you have the declaration of `valloc', and to 0 if you don't.
    */
@@ -131,9 +122,6 @@
 /* Define to 1 if you have a working `mmap' system call. */
 /* #undef HAVE_MMAP */
 
-/* define if the compiler implements namespaces */
-#define HAVE_NAMESPACES 1
-
 /* Define to 1 if you have the <poll.h> header file. */
 /* #undef HAVE_POLL_H */
 
@@ -157,9 +145,7 @@
 /* #undef HAVE_SCHED_H */
 
 /* Define to 1 if you have the <stdint.h> header file. */
-#if defined(_MSC_VER) && _MSC_VER >= 1900
 #define HAVE_STDINT_H 1
-#endif
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #define HAVE_STDLIB_H 1
@@ -215,9 +201,6 @@
 /* Define to 1 if you have the <unwind.h> header file. */
 /* #undef HAVE_UNWIND_H */
 
-/* Define to 1 if you have the <valgrind.h> header file. */
-/* #undef HAVE_VALGRIND_H */
-
 /* define if your compiler has __attribute__ */
 /* #undef HAVE___ATTRIBUTE__ */
 
@@ -226,9 +209,6 @@
 
 /* Define to 1 if compiler supports __environ */
 /* #undef HAVE___ENVIRON */
-
-/* Define to 1 if the system has the type `__int64'. */
-#define HAVE___INT64 1
 
 /* Define to 1 if you have the `__sbrk' function. */
 /* #undef HAVE___SBRK */
@@ -254,7 +234,7 @@
 #define PACKAGE_NAME "gperftools"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "gperftools 2.7"
+#define PACKAGE_STRING "gperftools 2.9.1"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gperftools"
@@ -263,7 +243,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.7"
+#define PACKAGE_VERSION "2.9.1"
 
 /* How to access the PC from a struct ucontext */
 /* #undef PC_FROM_UCONTEXT */
@@ -279,27 +259,6 @@
 # define PERFTOOLS_DLL_DECL_FOR_UNITTESTS __declspec(dllimport)
 #endif
 
-/* printf format code for printing a size_t and ssize_t */
-#ifdef _WIN64
-#define PRIdS "lld"
-#else
-#define PRIdS "d"
-#endif
-
-/* printf format code for printing a size_t and ssize_t */
-#ifdef _WIN64
-#define PRIuS "llu"
-#else
-#define PRIuS "u"
-#endif
-
-/* printf format code for printing a size_t and ssize_t */
-#ifdef _WIN64
-#define PRIxS "llx"
-#else
-#define PRIxS "x"
-#endif
-
 /* Mark the systems where we know it's bad if pthreads runs too
    early before main (before threads are initialized, presumably).  */
 #ifdef __FreeBSD__
@@ -313,30 +272,18 @@
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1
 
-/* the namespace where STL code like vector<> is defined */
-#define STL_NAMESPACE std
-
-/* Define 32K of internal pages size for tcmalloc */
-/* #undef TCMALLOC_32K_PAGES */
-
-/* Define 64K of internal pages size for tcmalloc */
-/* #undef TCMALLOC_64K_PAGES */
-
 /* Define 8 bytes of allocation alignment for tcmalloc */
 /* #undef TCMALLOC_ALIGN_8BYTES */
 
+/* Define internal page size for tcmalloc as number of left bitshift */
+/* #undef TCMALLOC_PAGE_SIZE_SHIFT */
+
 /* Version number of package */
-#define VERSION "2.7"
+#define VERSION "2.9.1"
 
 /* C99 says: define this to get the PRI... macros from stdint.h */
 #ifndef __STDC_FORMAT_MACROS
 # define __STDC_FORMAT_MACROS 1
-#endif
-
-/* Define to `__inline__' or `__inline' if that's what the C compiler
-   calls it, or to nothing if 'inline' is not supported under any name.  */
-#ifndef __cplusplus
-/* #undef inline */
 #endif
 
 // ---------------------------------------------------------------------
@@ -348,10 +295,6 @@
 // (This latter is an optimization we could take out if need be.)
 #ifndef _WIN32_WINNT
 # define _WIN32_WINNT 0x0501
-#endif
-
-#if defined(_MSC_VER) && _MSC_VER >= 1900
-#define HAVE_SNPRINTF 1
 #endif
 
 // We want to make sure not to ever try to #include heap-checker.h
