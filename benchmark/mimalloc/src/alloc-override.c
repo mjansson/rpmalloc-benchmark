@@ -10,30 +10,34 @@ terms of the MIT license. A copy of the license can be found in the file
 #endif
 
 #if defined(MI_MALLOC_OVERRIDE) && defined(_WIN32) && !(defined(MI_SHARED_LIB) && defined(_DLL))
-#error "It is only possible to override malloc on Windows when building as a DLL (and linking the C runtime as a DLL)"
+#error "It is only possible to override "malloc" on Windows when building as a DLL (and linking the C runtime as a DLL)"
 #endif
 
-#if defined(MI_MALLOC_OVERRIDE) && !defined(_WIN32)
+#if defined(MI_MALLOC_OVERRIDE) && !(defined(_WIN32)) // || (defined(__MACH__) && !defined(MI_INTERPOSE)))
 
 // ------------------------------------------------------
 // Override system malloc
 // ------------------------------------------------------
 
-#if defined(_MSC_VER)
-#pragma warning(disable:4273)  // inconsistent dll linking
-#endif
-
 #if (defined(__GNUC__) || defined(__clang__)) && !defined(__MACH__)
   // use aliasing to alias the exported function to one of our `mi_` functions
-  #define MI_FORWARD(fun)      __attribute__((alias(#fun), used));
-  #define MI_FORWARD1(fun,x)   MI_FORWARD(fun)
-  #define MI_FORWARD2(fun,x,y) MI_FORWARD(fun)
-  #define MI_FORWARD0(fun,x)   MI_FORWARD(fun)
+  #if (defined(__GNUC__) && __GNUC__ >= 9)
+    #define MI_FORWARD(fun)      __attribute__((alias(#fun), used, visibility("default"), copy(fun)))
+  #else
+    #define MI_FORWARD(fun)      __attribute__((alias(#fun), used, visibility("default")))
+  #endif
+  #define MI_FORWARD1(fun,x)      MI_FORWARD(fun)
+  #define MI_FORWARD2(fun,x,y)    MI_FORWARD(fun)
+  #define MI_FORWARD3(fun,x,y,z)  MI_FORWARD(fun)
+  #define MI_FORWARD0(fun,x)      MI_FORWARD(fun)
+  #define MI_FORWARD02(fun,x,y)   MI_FORWARD(fun)
 #else
   // use forwarding by calling our `mi_` function
-  #define MI_FORWARD1(fun,x)   { return fun(x); }
-  #define MI_FORWARD2(fun,x,y) { return fun(x,y); }
-  #define MI_FORWARD0(fun,x)   { fun(x); }
+  #define MI_FORWARD1(fun,x)      { return fun(x); }
+  #define MI_FORWARD2(fun,x,y)    { return fun(x,y); }
+  #define MI_FORWARD3(fun,x,y,z)  { return fun(x,y,z); }
+  #define MI_FORWARD0(fun,x)      { fun(x); }
+  #define MI_FORWARD02(fun,x,y)   { fun(x,y); }
 #endif
 
 #if defined(__APPLE__) && defined(MI_SHARED_LIB_EXPORT) && defined(MI_INTERPOSE)
@@ -43,21 +47,42 @@ terms of the MIT license. A copy of the license can be found in the file
     const void* replacement;
     const void* target;
   };
-  #define MI_INTERPOSEX(oldfun,newfun)  { (const void*)&newfun, (const void*)&oldfun }
-  #define MI_INTERPOSE_MI(fun)         MI_INTERPOSEX(fun,mi_##fun)
+  #define MI_INTERPOSE_FUN(oldfun,newfun) { (const void*)&newfun, (const void*)&oldfun }
+  #define MI_INTERPOSE_MI(fun)            MI_INTERPOSE_FUN(fun,mi_##fun)
   __attribute__((used)) static struct mi_interpose_s _mi_interposes[]  __attribute__((section("__DATA, __interpose"))) =
   {
     MI_INTERPOSE_MI(malloc),
     MI_INTERPOSE_MI(calloc),
     MI_INTERPOSE_MI(realloc),
-    MI_INTERPOSE_MI(free)
+    MI_INTERPOSE_MI(strdup),
+    MI_INTERPOSE_MI(strndup),
+    MI_INTERPOSE_MI(realpath),
+    MI_INTERPOSE_MI(posix_memalign),
+    MI_INTERPOSE_MI(reallocf),
+    MI_INTERPOSE_MI(valloc),
+    #ifndef MI_OSX_ZONE
+    // some code allocates from default zone but deallocates using plain free :-( (like NxHashResizeToCapacity <https://github.com/nneonneo/osx-10.9-opensource/blob/master/objc4-551.1/runtime/hashtable2.mm>)
+    MI_INTERPOSE_FUN(free,mi_cfree), // use safe free that checks if pointers are from us
+    #else
+    // We interpose malloc_default_zone in alloc-override-osx.c
+    MI_INTERPOSE_MI(free),
+    #endif
+    // some code allocates from a zone but deallocates using plain free :-( (like NxHashResizeToCapacity <https://github.com/nneonneo/osx-10.9-opensource/blob/master/objc4-551.1/runtime/hashtable2.mm>)
+    MI_INTERPOSE_FUN(free,mi_cfree), // use safe free that checks if pointers are from us
   };
+#elif defined(_MSC_VER)
+  // cannot override malloc unless using a dll.
+  // we just override new/delete which does work in a static library.
 #else
   // On all other systems forward to our API
-  void* malloc(size_t size)              mi_attr_noexcept  MI_FORWARD1(mi_malloc, size)
-  void* calloc(size_t size, size_t n)    mi_attr_noexcept  MI_FORWARD2(mi_calloc, size, n)
-  void* realloc(void* p, size_t newsize) mi_attr_noexcept  MI_FORWARD2(mi_realloc, p, newsize)
-  void  free(void* p)                    mi_attr_noexcept  MI_FORWARD0(mi_free, p)
+  void* malloc(size_t size)              MI_FORWARD1(mi_malloc, size);
+  void* calloc(size_t size, size_t n)    MI_FORWARD2(mi_calloc, size, n);
+  void* realloc(void* p, size_t newsize) MI_FORWARD2(mi_realloc, p, newsize);
+  void  free(void* p)                    MI_FORWARD0(mi_free, p);
+#endif
+
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__MACH__)
+#pragma GCC visibility push(default)
 #endif
 
 // ------------------------------------------------------
@@ -71,34 +96,66 @@ terms of the MIT license. A copy of the license can be found in the file
   // see <https://en.cppreference.com/w/cpp/memory/new/operator_new>
   // ------------------------------------------------------
   #include <new>
-  void operator delete(void* p) noexcept              MI_FORWARD0(mi_free,p)
-  void operator delete[](void* p) noexcept            MI_FORWARD0(mi_free,p)
-  void* operator new(std::size_t n) noexcept(false)   MI_FORWARD1(mi_malloc,n)
-  void* operator new[](std::size_t n) noexcept(false) MI_FORWARD1(mi_malloc,n)
+  void operator delete(void* p) noexcept              MI_FORWARD0(mi_free,p);
+  void operator delete[](void* p) noexcept            MI_FORWARD0(mi_free,p);
 
-  #if (__cplusplus >= 201703L)
-  void* operator new( std::size_t n, std::align_val_t align) noexcept(false)   MI_FORWARD2(mi_malloc_aligned,n,align)
-  void* operator new[]( std::size_t n, std::align_val_t align) noexcept(false) MI_FORWARD2(mi_malloc_aligned,n,align)
+  void* operator new(std::size_t n) noexcept(false)   MI_FORWARD1(mi_new,n);
+  void* operator new[](std::size_t n) noexcept(false) MI_FORWARD1(mi_new,n);
+
+  void* operator new  (std::size_t n, const std::nothrow_t& tag) noexcept { UNUSED(tag); return mi_new_nothrow(n); }
+  void* operator new[](std::size_t n, const std::nothrow_t& tag) noexcept { UNUSED(tag); return mi_new_nothrow(n); }
+
+  #if (__cplusplus >= 201402L || _MSC_VER >= 1916)
+  void operator delete  (void* p, std::size_t n) noexcept MI_FORWARD02(mi_free_size,p,n);
+  void operator delete[](void* p, std::size_t n) noexcept MI_FORWARD02(mi_free_size,p,n);
   #endif
-#else
+
+  #if (__cplusplus > 201402L && defined(__cpp_aligned_new)) && (!defined(__GNUC__) || (__GNUC__ > 5))
+  void operator delete  (void* p, std::align_val_t al) noexcept { mi_free_aligned(p, static_cast<size_t>(al)); }
+  void operator delete[](void* p, std::align_val_t al) noexcept { mi_free_aligned(p, static_cast<size_t>(al)); }
+  void operator delete  (void* p, std::size_t n, std::align_val_t al) noexcept { mi_free_size_aligned(p, n, static_cast<size_t>(al)); };
+  void operator delete[](void* p, std::size_t n, std::align_val_t al) noexcept { mi_free_size_aligned(p, n, static_cast<size_t>(al)); };
+
+  void* operator new( std::size_t n, std::align_val_t al)   noexcept(false) { return mi_new_aligned(n, static_cast<size_t>(al)); }
+  void* operator new[]( std::size_t n, std::align_val_t al) noexcept(false) { return mi_new_aligned(n, static_cast<size_t>(al)); }
+  void* operator new  (std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(n, static_cast<size_t>(al)); }
+  void* operator new[](std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(n, static_cast<size_t>(al)); }
+  #endif
+
+#elif (defined(__GNUC__) || defined(__clang__))
   // ------------------------------------------------------
-  // With a C compiler we override the new/delete operators
-  // by defining the mangled C++ names of the operators (as
+  // Override by defining the mangled C++ names of the operators (as
   // used by GCC and CLang).
   // See <https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling>
   // ------------------------------------------------------
-  void _ZdlPv(void* p) MI_FORWARD0(mi_free,p) // delete
-  void _ZdaPv(void* p) MI_FORWARD0(mi_free,p) // delete[]
+  void _ZdlPv(void* p)            MI_FORWARD0(mi_free,p); // delete
+  void _ZdaPv(void* p)            MI_FORWARD0(mi_free,p); // delete[]
+  void _ZdlPvm(void* p, size_t n) MI_FORWARD02(mi_free_size,p,n);
+  void _ZdaPvm(void* p, size_t n) MI_FORWARD02(mi_free_size,p,n);
+  void _ZdlPvSt11align_val_t(void* p, size_t al)            { mi_free_aligned(p,al); }
+  void _ZdaPvSt11align_val_t(void* p, size_t al)            { mi_free_aligned(p,al); }
+  void _ZdlPvmSt11align_val_t(void* p, size_t n, size_t al) { mi_free_size_aligned(p,n,al); }
+  void _ZdaPvmSt11align_val_t(void* p, size_t n, size_t al) { mi_free_size_aligned(p,n,al); }
+
+  typedef struct mi_nothrow_s {  } mi_nothrow_t;
   #if (MI_INTPTR_SIZE==8)
-    void* _Znwm(uint64_t n)                  MI_FORWARD1(mi_malloc,n)               // new 64-bit
-    void* _Znam(uint64_t n)                  MI_FORWARD1(mi_malloc,n)               // new[] 64-bit
-    void* _Znwmm(uint64_t n, uint64_t align) { return mi_malloc_aligned(n,align); } // aligned new 64-bit
-    void* _Znamm(uint64_t n, uint64_t align) { return mi_malloc_aligned(n,align); }  // aligned new[] 64-bit
+    void* _Znwm(size_t n)                             MI_FORWARD1(mi_new,n);  // new 64-bit
+    void* _Znam(size_t n)                             MI_FORWARD1(mi_new,n);  // new[] 64-bit
+    void* _ZnwmSt11align_val_t(size_t n, size_t al)   MI_FORWARD2(mi_new_aligned, n, al);
+    void* _ZnamSt11align_val_t(size_t n, size_t al)   MI_FORWARD2(mi_new_aligned, n, al);
+    void* _ZnwmRKSt9nothrow_t(size_t n, mi_nothrow_t tag) { UNUSED(tag); return mi_new_nothrow(n); }
+    void* _ZnamRKSt9nothrow_t(size_t n, mi_nothrow_t tag) { UNUSED(tag); return mi_new_nothrow(n); }
+    void* _ZnwmSt11align_val_tRKSt9nothrow_t(size_t n, size_t al, mi_nothrow_t tag) { UNUSED(tag); return mi_new_aligned_nothrow(n,al); }
+    void* _ZnamSt11align_val_tRKSt9nothrow_t(size_t n, size_t al, mi_nothrow_t tag) { UNUSED(tag); return mi_new_aligned_nothrow(n,al); }
   #elif (MI_INTPTR_SIZE==4)
-    void* _Znwj(uint32_t n)                  MI_FORWARD1(mi_malloc,n)               // new 32-bit
-    void* _Znaj(uint32_t n)                  MI_FORWARD1(mi_malloc,n)               // new[] 32-bit
-    void* _Znwjj(uint32_t n, uint32_t align) { return mi_malloc_aligned(n,align); }  // aligned new 32-bit
-    void* _Znajj(uint32_t n, uint32_t align) { return mi_malloc_aligned(n,align); }  // aligned new[] 32-bit
+    void* _Znwj(size_t n)                             MI_FORWARD1(mi_new,n);  // new 64-bit
+    void* _Znaj(size_t n)                             MI_FORWARD1(mi_new,n);  // new[] 64-bit
+    void* _ZnwjSt11align_val_t(size_t n, size_t al)   MI_FORWARD2(mi_new_aligned, n, al);
+    void* _ZnajSt11align_val_t(size_t n, size_t al)   MI_FORWARD2(mi_new_aligned, n, al);
+    void* _ZnwjRKSt9nothrow_t(size_t n, mi_nothrow_t tag) { UNUSED(tag); return mi_new_nothrow(n); }
+    void* _ZnajRKSt9nothrow_t(size_t n, mi_nothrow_t tag) { UNUSED(tag); return mi_new_nothrow(n); }
+    void* _ZnwjSt11align_val_tRKSt9nothrow_t(size_t n, size_t al, mi_nothrow_t tag) { UNUSED(tag); return mi_new_aligned_nothrow(n,al); }
+    void* _ZnajSt11align_val_tRKSt9nothrow_t(size_t n, size_t al, mi_nothrow_t tag) { UNUSED(tag); return mi_new_aligned_nothrow(n,al); }
   #else
   #error "define overloads for new/delete for this platform (just for performance, can be skipped)"
   #endif
@@ -113,80 +170,52 @@ extern "C" {
 // Posix & Unix functions definitions
 // ------------------------------------------------------
 
-#include <errno.h>
-
-#ifndef EINVAL
-#define EINVAL 22
+void   cfree(void* p)                    MI_FORWARD0(mi_free, p);
+void*  reallocf(void* p, size_t newsize) MI_FORWARD2(mi_reallocf,p,newsize);
+size_t malloc_size(const void* p)        MI_FORWARD1(mi_usable_size,p);
+#if !defined(__ANDROID__)
+size_t malloc_usable_size(void *p)       MI_FORWARD1(mi_usable_size,p);
+#else
+size_t malloc_usable_size(const void *p) MI_FORWARD1(mi_usable_size,p);
 #endif
-#ifndef ENOMEM
-#define ENOMEM 12
+
+// no forwarding here due to aliasing/name mangling issues
+void* valloc(size_t size)                                     { return mi_valloc(size); }
+void* pvalloc(size_t size)                                    { return mi_pvalloc(size); }
+void* reallocarray(void* p, size_t count, size_t size)        { return mi_reallocarray(p, count, size); }
+void* memalign(size_t alignment, size_t size)                 { return mi_memalign(alignment, size); }
+int   posix_memalign(void** p, size_t alignment, size_t size) { return mi_posix_memalign(p, alignment, size); }
+void* _aligned_malloc(size_t alignment, size_t size)          { return mi_aligned_alloc(alignment, size); }
+
+// on some glibc `aligned_alloc` is declared `static inline` so we cannot override it (e.g. Conda). This happens
+// when _GLIBCXX_HAVE_ALIGNED_ALLOC is not defined. However, in those cases it will use `memalign`, `posix_memalign`, 
+// or `_aligned_malloc` and we can avoid overriding it ourselves.
+// We should always override if using C compilation. (issue #276)
+#if _GLIBCXX_HAVE_ALIGNED_ALLOC || !defined(__cplusplus)
+void* aligned_alloc(size_t alignment, size_t size)   { return mi_aligned_alloc(alignment, size); }
 #endif
 
-void*  reallocf(void* p, size_t newsize) MI_FORWARD2(mi_reallocf,p,newsize)
-size_t malloc_size(void* p)              MI_FORWARD1(mi_usable_size,p)
-size_t malloc_usable_size(void *p)       MI_FORWARD1(mi_usable_size,p)
-void   cfree(void* p)                    MI_FORWARD0(mi_free, p)
-
-int posix_memalign(void** p, size_t alignment, size_t size) {
-  // TODO: the spec says we should return EINVAL also if alignment is not a power of 2.
-  // The spec also dictates we should not modify `*p` on an error. (issue#27)
-  // <http://man7.org/linux/man-pages/man3/posix_memalign.3.html>
-  if (alignment % sizeof(void*) != 0) return EINVAL;  // no `p==NULL` check as it is declared as non-null
-  void* q = mi_malloc_aligned(size, alignment);
-  if (q==NULL && size != 0) return ENOMEM;
-  *p = q;
-  return 0;
-}
-
-void* memalign(size_t alignment, size_t size) {
-  return mi_malloc_aligned(size, alignment);
-}
-
-void* valloc(size_t size) {
-  return mi_malloc_aligned(size, _mi_os_page_size());
-}
-
-void* pvalloc(size_t size) {
-  size_t psize = _mi_os_page_size();
-  if (size >= SIZE_MAX - psize) return NULL; // overflow
-  size_t asize = ((size + psize - 1) / psize) * psize;
-  return mi_malloc_aligned(asize, psize);
-}
-
-void* aligned_alloc(size_t alignment, size_t size) {
-  return mi_malloc_aligned(size, alignment);
-}
-
-void* reallocarray( void* p, size_t count, size_t size ) {  // BSD
-  void* newp = mi_reallocn(p,count,size);
-  if (newp==NULL) errno = ENOMEM;
-  return newp;
-}
 
 #if defined(__GLIBC__) && defined(__linux__)
-  // forward __libc interface (needed for redhat linux)
-  void* __libc_malloc(size_t size)                  MI_FORWARD1(mi_malloc,size)
-  void* __libc_calloc(size_t count, size_t size)    MI_FORWARD2(mi_calloc,count,size)
-  void* __libc_realloc(void* p, size_t size)        MI_FORWARD2(mi_realloc,p,size)
-  void  __libc_free(void* p)                        MI_FORWARD0(mi_free,p)
-  void  __libc_cfree(void* p)                       MI_FORWARD0(mi_free,p)
+  // forward __libc interface (needed for glibc-based Linux distributions)
+  void* __libc_malloc(size_t size)                  MI_FORWARD1(mi_malloc,size);
+  void* __libc_calloc(size_t count, size_t size)    MI_FORWARD2(mi_calloc,count,size);
+  void* __libc_realloc(void* p, size_t size)        MI_FORWARD2(mi_realloc,p,size);
+  void  __libc_free(void* p)                        MI_FORWARD0(mi_free,p);
+  void  __libc_cfree(void* p)                       MI_FORWARD0(mi_free,p);
 
-  void* __libc_memalign(size_t alignment, size_t size)  {
-    return memalign(alignment,size);
-  }
-  void* __libc_valloc(size_t size) {
-    return valloc(size);
-  }
-  void* __libc_pvalloc(size_t size) {
-    return pvalloc(size);
-  }
-  int __posix_memalign(void** p, size_t alignment, size_t size)  {
-    return posix_memalign(p,alignment,size);
-  }
+  void* __libc_valloc(size_t size)                                { return mi_valloc(size); }
+  void* __libc_pvalloc(size_t size)                               { return mi_pvalloc(size); }
+  void* __libc_memalign(size_t alignment, size_t size)            { return mi_memalign(alignment,size); }
+  int   __posix_memalign(void** p, size_t alignment, size_t size) { return mi_posix_memalign(p,alignment,size); }
 #endif
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // MI_MALLOC_OVERRIDE & !_WIN32
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__MACH__)
+#pragma GCC visibility pop
+#endif
+
+#endif // MI_MALLOC_OVERRIDE && !_WIN32

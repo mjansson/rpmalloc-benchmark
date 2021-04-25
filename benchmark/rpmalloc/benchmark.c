@@ -21,7 +21,7 @@ benchmark_thread_initialize(void) {
 
 int
 benchmark_thread_finalize(void) {
-	rpmalloc_thread_finalize();
+	rpmalloc_thread_finalize(0);
 	return 0;
 }
 

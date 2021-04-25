@@ -320,7 +320,7 @@ get_cross_thread_memory(atomicptr_t* ptr) {
 	do {
 		prev = atomic_load_ptr(ptr);
 		current = (void*)((uintptr_t)prev & ~(uintptr_t)0xF);
-	} while (current && !atomic_cas_ptr(ptr, (void*)((uintptr_t)atomic_incr32(&cross_thread_counter) & 0xF), prev));
+	} while (current && !atomic_cas_ptr(ptr, (void*)((uintptr_t)atomic_incr32(&cross_thread_counter) & (uintptr_t)0xF), prev));
 	return current;
 }
 
@@ -423,14 +423,15 @@ benchmark_worker(void* argptr) {
 
 			foreign = 0;
 			if (arg->cross_rate && ((iloop % arg->cross_rate) == 0) && (do_foreign > 0)) {
+				size_t foreign_count = alloc_op_count / 4;
 				foreign = benchmark_malloc(16, sizeof(thread_pointers));
-				foreign->count = alloc_op_count;
-				foreign->pointers = benchmark_malloc(16, sizeof(void*) * alloc_op_count);
+				foreign->count = foreign_count;
+				foreign->pointers = benchmark_malloc(16, sizeof(void*) * foreign_count);
 				foreign->allocated = &arg->allocated;
-				allocated += (int32_t)(alloc_op_count * sizeof(void*) + sizeof(thread_pointers));
+				allocated += (int32_t)(foreign_count * sizeof(void*) + sizeof(thread_pointers));
 				arg->mops += 2;
 
-				for (iop = 0; iop < alloc_op_count; ++iop) {
+				for (iop = 0; iop < foreign_count; ++iop) {
 					size_t size = arg->min_size;
 					if (arg->mode == MODE_RANDOM)
 						size = random_size_arr[(size_index + 2) % random_size_count];
@@ -467,7 +468,7 @@ benchmark_worker(void* argptr) {
 			if (atomic_load32(&benchmark_threads_sync) > 0)
 				do_foreign = 0; //one thread completed
 
-			if (timer_ticks_to_seconds(iter_ticks_elapsed) > 120) {
+			if (timer_ticks_to_seconds(iter_ticks_elapsed) > 30) {
 				aborted = 1;
 				break;
 			}
@@ -564,16 +565,17 @@ benchmark_worker(void* argptr) {
 		fflush(stdout);
 
 		//printf(" %.2f ", timer_ticks_to_seconds(iter_ticks_elapsed));
-		//if (aborted)
+		//if (aborted) {
 		//	printf("(aborted) ");
-		//fflush(stdout);
+		//	fflush(stdout);
+		//}
 		aborted = 0;
 	}
 
 	//Sync threads
+	atomic_incr32(&benchmark_threads_sync);
 	thread_sleep(1000);
 	thread_fence();
-	atomic_incr32(&benchmark_threads_sync);
 	do {
 		foreign = get_cross_thread_memory(&arg->foreign);
 		if (foreign) {
@@ -598,7 +600,7 @@ benchmark_worker(void* argptr) {
 			arg->ticks += ticks_elapsed;
 		}
 
-		thread_sleep(1);
+		thread_sleep(10);
 		thread_fence();
 	} while (atomic_load32(&benchmark_threads_sync));
 
@@ -735,10 +737,6 @@ benchmark_run(int argc, char** argv) {
 		        (unsigned int)loop_count, (unsigned int)alloc_count, (unsigned int)op_count);
 	fflush(stdout);
 
-	size_t memory_usage = 0;
-	size_t cur_memory_usage = 0;
-	size_t sample_allocated = 0;
-	size_t cur_allocated = 0;
 	uint64_t mops = 0;
 	uint64_t ticks = 0;
 
@@ -773,54 +771,32 @@ benchmark_run(int argc, char** argv) {
 		thread_fence();
 
 		while (atomic_load32(&benchmark_threads_sync) < (int32_t)thread_count) {
-			thread_sleep(1000);
+			thread_sleep(100);
 			thread_fence();
 		}
-		thread_sleep(1000);
+		thread_sleep(100);
 		thread_fence();
-
-		cur_allocated = 0;
-		for (size_t ithread = 0; ithread < thread_count; ++ithread) {
-			size_t thread_allocated = (size_t)atomic_load32(&arg[ithread].allocated);
-			cur_allocated += thread_allocated;
-		}
-		cur_memory_usage = get_process_memory_usage();
-		if ((cur_allocated > sample_allocated) || (cur_memory_usage > memory_usage)) {
-			sample_allocated = cur_allocated;
-			memory_usage = cur_memory_usage;
-		}
 
 		atomic_store32(&benchmark_threads_sync, 0);
 		thread_fence();
 
-		thread_sleep(1000);
+		thread_sleep(100);
 		while (atomic_load32(&benchmark_threads_sync) < (int32_t)thread_count) {
-			thread_sleep(1000);
+			thread_sleep(100);
 			thread_fence();
 		}
-		thread_sleep(1000);
+		thread_sleep(100);
 		thread_fence();
-
-		cur_allocated = 0;
-		for (size_t ithread = 0; ithread < thread_count; ++ithread) {
-			size_t thread_allocated = (size_t)atomic_load32(&arg[ithread].allocated);
-			cur_allocated += thread_allocated;
-		}
-		cur_memory_usage = get_process_memory_usage();
-		if ((cur_allocated > sample_allocated) || (cur_memory_usage > memory_usage)) {
-			sample_allocated = cur_allocated;
-			memory_usage = cur_memory_usage;
-		}
 
 		atomic_store32(&benchmark_threads_sync, 0);
 		thread_fence();
 
-		thread_sleep(1000);
+		thread_sleep(100);
 		while (atomic_load32(&benchmark_threads_sync) < (int32_t)thread_count) {
-			thread_sleep(1000);
+			thread_sleep(100);
 			thread_fence();
 		}
-		thread_sleep(1000);
+		thread_sleep(100);
 		thread_fence();
 
 		atomic_store32(&benchmark_threads_sync, 0);
@@ -845,32 +821,29 @@ benchmark_run(int argc, char** argv) {
 	char filebuf[64];
 	if (mode == 0)
 		sprintf(filebuf, "benchmark-random-%u-%u-%u-%s.txt",
-				(unsigned int)thread_count, (unsigned int)min_size,
-				(unsigned int)max_size, benchmark_name());
+		        (unsigned int)thread_count, (unsigned int)min_size,
+		        (unsigned int)max_size, benchmark_name());
 	else
 		sprintf(filebuf, "benchmark-fixed-%u-%u-%s.txt",
-				(unsigned int)thread_count, (unsigned int)min_size,
-				benchmark_name());
+		        (unsigned int)thread_count, (unsigned int)min_size,
+		        benchmark_name());
 	fd = fopen(filebuf, "w+b");
 
-	size_t peak_allocated = get_process_peak_memory_usage();
+	size_t process_peak_usage = get_process_peak_memory_usage();
 	double time_elapsed = timer_ticks_to_seconds(ticks);
 	double average_mops = (double)mops / time_elapsed;
 	char linebuf[128];
-	int len = snprintf(linebuf, sizeof(linebuf), "%u,%" PRIsize ",%" PRIsize ",%" PRIsize "\n",
-		                (unsigned int)average_mops,
-		                peak_allocated,
-	                    sample_allocated,
-		                memory_usage);
+	int len = snprintf(linebuf, sizeof(linebuf), "%u,%" PRIsize "\n",
+	                   (unsigned int)average_mops,
+	                   process_peak_usage);
 	if (fd) {
 		fwrite(linebuf, (len > 0) ? (size_t)len : 0, 1, fd);
 		fflush(fd);
 	}
 
-	printf("%u memory ops/CPU second (%uMiB peak, %uMiB -> %uMiB bytes sample, %.0f%% overhead)\n",
-		    (unsigned int)average_mops, (unsigned int)(peak_allocated / (1024 * 1024)),
-	        (unsigned int)(sample_allocated / (1024 * 1024)), (unsigned int)(memory_usage / (1024 * 1024)),
-	        100.0 * ((double)memory_usage - (double)sample_allocated) / (double)sample_allocated);
+	printf(" %u memory ops/CPU second (peak %uMiB)\n",
+	       (unsigned int)average_mops,
+	       (unsigned int)(process_peak_usage / (1024 * 1024)));
 	fflush(stdout);
 
 	if (fd)
