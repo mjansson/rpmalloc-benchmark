@@ -130,6 +130,15 @@ if not target.is_windows() and not target.is_android():
 	jemalloc_depend_libs = ['jemalloc', 'benchmark', 'test']
 	generator.bin(module = 'jemalloc', sources = ['benchmark.c'], binname = 'benchmark-jemalloc', basepath = 'benchmark', implicit_deps = [jemalloc_lib, benchmark_lib, test_lib], libs = jemalloc_depend_libs, includepaths = includepaths, variables = je_variables)
 
+snmallocincludepaths = [
+	os.path.join('benchmark', 'snmalloc', 'src'),
+]
+snmallocsources = [os.path.join('src', 'override', 'malloc.cc')]
+snvariables = merge_variables({'defines': ['SNMALLOC_STATIC_LIBRARY=1', 'SNMALLOC_STATIC_LIBRARY_PREFIX=sn_'], 'cflags': ['-mcx16'], 'runtime': 'c++'}, variables)
+snmalloc_lib = generator.lib(module = 'snmalloc', sources = snmallocsources, basepath = 'benchmark', includepaths = includepaths + snmallocincludepaths, variables = snvariables)
+snmalloc_depend_libs = ['snmalloc', 'benchmark', 'test']
+generator.bin(module = 'snmalloc', sources = ['benchmark.cc'], binname = 'benchmark-snmalloc', basepath = 'benchmark', implicit_deps = [snmalloc_lib, benchmark_lib, test_lib], libs = snmalloc_depend_libs, includepaths = includepaths + snmallocincludepaths, variables = snvariables)
+
 scallocincludepaths = [
 	os.path.join('benchmark', 'scalloc', 'src'),
 	os.path.join('benchmark', 'scalloc', 'src', 'platform')
