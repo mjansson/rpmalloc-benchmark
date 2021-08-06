@@ -54,6 +54,16 @@ atomic_incr32(atomic32_t* val) {
 }
 
 static int32_t
+atomic_decr32(atomic32_t* val) {
+#ifdef _MSC_VER
+	int32_t old = (int32_t)_InterlockedExchangeAdd((volatile long*)&val->nonatomic, -1);
+	return (old - 1);
+#else
+	return __sync_add_and_fetch(&val->nonatomic, -1);
+#endif
+}
+
+static int32_t
 atomic_add32(atomic32_t* val, int32_t add) {
 #ifdef _MSC_VER
 	int32_t old = (int32_t)_InterlockedExchangeAdd((volatile long*)&val->nonatomic, add);

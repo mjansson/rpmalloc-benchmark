@@ -136,7 +136,7 @@
 #include "maybe_emergency_malloc.h"
 
 #if (defined(_WIN32) && !defined(__CYGWIN__) && !defined(__CYGWIN32__)) && !defined(WIN32_OVERRIDE_ALLOCATORS)
-# define WIN32_DO_PATCHING 1
+//# define WIN32_DO_PATCHING 1
 #endif
 
 // Some windows file somewhere (at least on cygwin) #define's small (!)

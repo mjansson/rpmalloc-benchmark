@@ -55,7 +55,7 @@ class MSVCToolchain(toolchain.Toolchain):
 
     if not 'nowarning' in variables or not variables['nowarning']:
       self.cflags += self.cwarnflags
-    self.cxxflags = list(self.cflags)
+    self.cxxflags = list(self.cflags) + ['/std:c++17', '/EHsc']
 
     #Overrides
     self.objext = '.obj'

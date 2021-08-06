@@ -107,7 +107,7 @@ if target.is_windows():
 	gperftoolssources += [os.path.join('windows', 'port.cc'), os.path.join('windows', 'system-alloc.cc')]
 gperftoolssources = [os.path.join('src', path) for path in gperftoolssources]
 if not target.is_android():
-	gperf_variables = merge_variables({'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK']}, variables)
+	gperf_variables = merge_variables({'runtime': 'c++', 'defines': ['NO_TCMALLOC_SAMPLES', 'NO_HEAP_CHECK'], 'nowarning': True}, variables)
 	gperftools_lib = generator.lib(module = 'gperftools', sources = gperftoolsbasesources + gperftoolssources, basepath = 'benchmark', includepaths = includepaths + gperftoolsincludepaths, variables = gperf_variables)
 	gperftools_depend_libs = ['gperftools', 'benchmark', 'test']
 	generator.bin(module = 'gperftools', sources = ['benchmark.c'], binname = 'benchmark-tcmalloc', basepath = 'benchmark', implicit_deps = [gperftools_lib, benchmark_lib, test_lib], libs = gperftools_depend_libs, includepaths = includepaths, variables = gperf_variables)
@@ -136,7 +136,7 @@ snmallocincludepaths = [
 snmallocsources = [os.path.join('src', 'override', 'malloc.cc')]
 snvariables = merge_variables({'defines': ['SNMALLOC_STATIC_LIBRARY=1', 'SNMALLOC_STATIC_LIBRARY_PREFIX=sn_'], 'cflags': ['-mcx16'], 'runtime': 'c++'}, variables)
 snmalloc_lib = generator.lib(module = 'snmalloc', sources = snmallocsources, basepath = 'benchmark', includepaths = includepaths + snmallocincludepaths, variables = snvariables)
-snmalloc_depend_libs = ['snmalloc', 'benchmark', 'test']
+snmalloc_depend_libs = ['snmalloc', 'benchmark', 'test', 'WindowsApp']
 generator.bin(module = 'snmalloc', sources = ['benchmark.cc'], binname = 'benchmark-snmalloc', basepath = 'benchmark', implicit_deps = [snmalloc_lib, benchmark_lib, test_lib], libs = snmalloc_depend_libs, includepaths = includepaths + snmallocincludepaths, variables = snvariables)
 
 scallocincludepaths = [

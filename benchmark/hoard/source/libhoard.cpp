@@ -48,7 +48,7 @@ using namespace HL;
 #pragma inline_depth(255)
 
 // Turn inlining hints into requirements.
-#define inline __forceinline
+//#define inline __forceinline
 #pragma warning(disable:4273)
 #pragma warning(disable: 4098)  // Library conflict.
 #pragma warning(disable: 4355)  // 'this' used in base member initializer list.

@@ -534,7 +534,7 @@ benchmark_worker(void* argptr) {
 
 			thread_sleep(1);
 			thread_fence();
-		} while (atomic_load32(&benchmark_threads_sync));
+		} while (atomic_load32(&benchmark_threads_sync) > 0);
 
 		allocated = 0;
 		tick_start = timer_current();
@@ -577,7 +577,7 @@ benchmark_worker(void* argptr) {
 	}
 
 	//Sync threads
-	atomic_incr32(&benchmark_threads_sync);
+	atomic_decr32(&benchmark_threads_sync);
 	thread_sleep(1000);
 	thread_fence();
 	do {
@@ -606,7 +606,7 @@ benchmark_worker(void* argptr) {
 
 		thread_sleep(10);
 		thread_fence();
-	} while (atomic_load32(&benchmark_threads_sync));
+	} while (atomic_load32(&benchmark_threads_sync) < 0);
 
 	benchmark_free(pointers);
 	atomic_add32(&arg->allocated, -(int32_t)pointers_size);
@@ -796,7 +796,7 @@ benchmark_run(int argc, char** argv) {
 		thread_fence();
 
 		thread_sleep(100);
-		while (atomic_load32(&benchmark_threads_sync) < (int32_t)thread_count) {
+		while (atomic_load32(&benchmark_threads_sync) > -(int32_t)thread_count) {
 			thread_sleep(100);
 			thread_fence();
 		}
