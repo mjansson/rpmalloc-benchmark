@@ -727,14 +727,14 @@ benchmark_run(int argc, char** argv) {
 	benchmark_start = 0;
 
 	if (mode == MODE_RANDOM)
-		printf("%-12s %u threads random %s size [%u,%u] %u loops %u allocs %u ops: ",
+		printf("%-12s %3u threads random %s size [%u,%u] %u loops %u allocs %u ops: ",
 		        benchmark_name(),
 		        (unsigned int)thread_count,
 		        (size_mode == SIZE_MODE_EVEN) ? "even" : ((size_mode == SIZE_MODE_LINEAR) ? "linear" : "exp"),
 		        (unsigned int)min_size, (unsigned int)max_size,
 		        (unsigned int)loop_count, (unsigned int)alloc_count, (unsigned int)op_count);
 	else
-		printf("%-12s %u threads fixed size [%u] %u loops %u allocs %u ops: ",
+		printf("%-12s %3u threads fixed size [%u] %u loops %u allocs %u ops: ",
 		        benchmark_name(),
 		        (unsigned int)thread_count,
 		        (unsigned int)min_size,
