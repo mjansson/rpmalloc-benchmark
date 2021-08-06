@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------------
-Copyright (c) 2018, Microsoft Research, Daan Leijen
+Copyright (c) 2018-2021, Microsoft Research, Daan Leijen
 This is free software; you can redistribute it and/or modify it under the
 terms of the MIT license. A copy of the license can be found in the file
 "LICENSE" at the root of this distribution.
@@ -557,6 +557,7 @@ void* _mi_externs[] = {
   (void*)&_mi_page_malloc,
   (void*)&mi_malloc,
   (void*)&mi_malloc_small,
+  (void*)&mi_zalloc_small,
   (void*)&mi_heap_malloc,
   (void*)&mi_heap_zalloc,
   (void*)&mi_heap_malloc_small

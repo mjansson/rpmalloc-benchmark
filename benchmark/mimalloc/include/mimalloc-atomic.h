@@ -1,5 +1,5 @@
 /* ----------------------------------------------------------------------------
-Copyright (c) 2018,2020 Microsoft Research, Daan Leijen
+Copyright (c) 2018-2021 Microsoft Research, Daan Leijen
 This is free software; you can redistribute it and/or modify it under the
 terms of the MIT license. A copy of the license can be found in the file
 "LICENSE" at the root of this distribution.
@@ -295,7 +295,7 @@ static inline void mi_atomic_yield(void) {
 }
 #elif defined(__aarch64__)
 static inline void mi_atomic_yield(void) {
-  asm volatile("wfe");
+  __asm__ volatile("wfe");
 }
 #elif (defined(__arm__) && __ARM_ARCH__ >= 7)
 static inline void mi_atomic_yield(void) {
@@ -307,7 +307,7 @@ static inline void mi_atomic_yield(void) {
 }
 #elif defined(__armel__) || defined(__ARMEL__)
 static inline void mi_atomic_yield(void) {
-  asm volatile ("nop" ::: "memory");
+  __asm__ volatile ("nop" ::: "memory");
 }
 #endif
 #elif defined(__sun)
