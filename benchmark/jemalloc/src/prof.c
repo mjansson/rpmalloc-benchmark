@@ -1292,7 +1292,7 @@ prof_dump_write(bool propagate_err, const char *s) {
 			}
 		}
 
-		if (prof_dump_buf_end + slen <= PROF_DUMP_BUFSIZE) {
+		if (prof_dump_buf_end + slen - i <= PROF_DUMP_BUFSIZE) {
 			/* Finish writing. */
 			n = slen - i;
 		} else {
@@ -1303,6 +1303,7 @@ prof_dump_write(bool propagate_err, const char *s) {
 		prof_dump_buf_end += n;
 		i += n;
 	}
+	assert(i == slen);
 
 	return false;
 }
@@ -2744,12 +2745,12 @@ prof_log_stop(tsdn_t *tsdn) {
 	emitter_init(&emitter, emitter_output_json, &prof_emitter_write_cb,
 	    (void *)(&arg));
 
-	emitter_json_object_begin(&emitter);
+	emitter_begin(&emitter);
 	prof_log_emit_metadata(&emitter);
 	prof_log_emit_threads(tsd, &emitter);
 	prof_log_emit_traces(tsd, &emitter);
 	prof_log_emit_allocs(tsd, &emitter);
-	emitter_json_object_end(&emitter);
+	emitter_end(&emitter);
 
 	/* Reset global state. */
 	if (log_tables_initialized) {
