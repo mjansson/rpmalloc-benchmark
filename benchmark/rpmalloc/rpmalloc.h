@@ -55,8 +55,9 @@ extern "C" {
 #define RPMALLOC_MAX_ALIGNMENT (256 * 1024)
 
 //! Define RPMALLOC_FIRST_CLASS_HEAPS to enable heap based API (rpmalloc_heap_* functions).
+//  Adds a very slight overhead to some functions to handle first class heaps correctly.
 #ifndef RPMALLOC_FIRST_CLASS_HEAPS
-#define RPMALLOC_FIRST_CLASS_HEAPS 1
+#define RPMALLOC_FIRST_CLASS_HEAPS 0
 #endif
 
 //! Flag to rpaligned_realloc to not preserve content in reallocation
