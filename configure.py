@@ -161,23 +161,61 @@ if not target.is_windows():
 
 if not target.is_windows():
 	bmallocincludepaths = [
-		os.path.join('benchmark', 'bmalloc', 'bmalloc')
+		os.path.join('benchmark', 'bmalloc', 'bmalloc'),
+		os.path.join('benchmark', 'bmalloc', 'libpas', 'src', 'libpas')
 	]
+	libpassources = [
+		'bmalloc_heap.c', 'bmalloc_heap_config.c', 'bmalloc_type.c', 'hotbit_heap.c', 'hotbit_heap_config.c', 'iso_heap.c',
+		'iso_heap_config.c', 'iso_test_heap.c',	'iso_test_heap_config.c', 'jit_heap.c', 'jit_heap_config.c', 'minalign32_heap.c',
+		'minalign32_heap_config.c', 'pagesize64k_heap.c', 'pagesize64k_heap_config.c', 'pas_alignment.c', 'pas_all_heaps.c',
+		'pas_allocation_callbacks.c', 'pas_allocation_result.c', 'pas_all_shared_page_directories.c', 'pas_baseline_allocator.c',
+		'pas_baseline_allocator_table.c', 'pas_basic_heap_config_enumerator_data.c', 'pas_bitfit_allocator.c', 'pas_bitfit_directory.c',
+		'pas_bitfit_heap.c', 'pas_bitfit_page.c', 'pas_bitfit_page_config_kind.c', 'pas_bitfit_size_class.c', 'pas_bitfit_view.c',
+		'pas_bootstrap_free_heap.c', 'pas_bootstrap_heap_page_provider.c', 'pas_coalign.c', 'pas_commit_span.c', 'pas_committed_pages_vector.c',
+		'pas_compact_bootstrap_free_heap.c', 'pas_compact_expendable_memory.c', 'pas_compact_heap_reservation.c', 'pas_compact_large_utility_free_heap.c',
+		'pas_compute_summary_object_callbacks.c', 'pas_create_basic_heap_page_caches_with_reserved_memory.c', 'pas_deallocate.c',
+		'pas_debug_spectrum.c', 'pas_deferred_decommit_log.c', 'pas_designated_intrinsic_heap.c', 'pas_dyld_state.c',
+		'pas_dynamic_primitive_heap_map.c', 'pas_ensure_heap_forced_into_reserved_memory.c', 'pas_ensure_heap_with_page_caches.c',
+		'pas_enumerable_page_malloc.c', 'pas_enumerable_range_list.c', 'pas_enumerate_bitfit_heaps.c', 'pas_enumerate_initially_unaccounted_pages.c',
+		'pas_enumerate_large_heaps.c', 'pas_enumerate_segregated_heaps.c', 'pas_enumerate_unaccounted_pages_as_meta.c', 'pas_enumerator.c',
+		'pas_enumerator_region.c', 'pas_epoch.c', 'pas_exclusive_view_template_memo_table.c', 'pas_expendable_memory.c', 'pas_extended_gcd.c',
+		'pas_fast_large_free_heap.c', 'pas_fast_megapage_cache.c', 'pas_fast_megapage_table.c', 'pas_fd_stream.c', 'pas_free_granules.c',
+		'pas_heap.c', 'pas_heap_config.c', 'pas_heap_config_kind.c', 'pas_heap_config_utils.c', 'pas_heap_for_config.c',
+		'pas_heap_lock.c', 'pas_heap_ref.c', 'pas_heap_runtime_config.c', 'pas_heap_summary.c', 'pas_heap_table.c', 'pas_immortal_heap.c',
+		'pas_large_expendable_memory.c', 'pas_large_free_heap_deferred_commit_log.c', 'pas_large_free_heap_helpers.c', 'pas_large_heap.c',
+		'pas_large_heap_physical_page_sharing_cache.c', 'pas_large_map.c', 'pas_large_sharing_pool.c', 'pas_large_utility_free_heap.c',
+		'pas_lenient_compact_unsigned_ptr.c', 'pas_local_allocator.c', 'pas_local_allocator_scavenger_data.c', 'pas_local_view_cache.c',
+		'pas_lock.c', 'pas_lock_free_read_ptr_ptr_hashtable.c', 'pas_log.c', 'pas_malloc_stack_logging.c', 'pas_medium_megapage_cache.c',
+		'pas_megapage_cache.c', 'pas_monotonic_time.c', 'pas_page_base.c', 'pas_page_base_config.c', 'pas_page_header_table.c',
+		'pas_page_malloc.c', 'pas_page_sharing_participant.c', 'pas_page_sharing_pool.c', 'pas_payload_reservation_page_list.c',
+		'pas_physical_memory_transaction.c', 'pas_primitive_heap_ref.c', 'pas_probabilistic_guard_malloc_allocator.c',
+		'pas_ptr_worklist.c', 'pas_race_test_hooks.c', 'pas_random.c', 'pas_red_black_tree.c', 'pas_redundant_local_allocator_node.c',
+		'pas_report_crash.c', 'pas_reserved_memory_provider.c', 'pas_root.c', 'pas_scavenger.c', 'pas_segregated_directory.c',
+		'pas_segregated_exclusive_view.c', 'pas_segregated_heap.c', 'pas_segregated_page.c', 'pas_segregated_page_config.c',
+		'pas_segregated_page_config_kind_and_role.c', 'pas_segregated_page_config_kind.c', 'pas_segregated_partial_view.c',
+		'pas_segregated_shared_handle.c', 'pas_segregated_shared_page_directory.c', 'pas_segregated_shared_view.c',
+		'pas_segregated_size_directory.c', 'pas_segregated_view.c', 'pas_shared_page_directory_by_size.c', 'pas_simple_free_heap_helpers.c',
+		'pas_simple_large_free_heap.c', 'pas_simple_type.c', 'pas_status_reporter.c', 'pas_stream.c', 'pas_string_stream.c',
+		'pas_thread_local_cache.c', 'pas_thread_local_cache_layout.c', 'pas_thread_local_cache_layout_node.c', 'pas_thread_local_cache_node.c',
+		'pas_thread_suspend_lock.c', 'pas_utility_heap.c', 'pas_utility_heap_config.c', 'pas_utils.c', 'pas_versioned_field.c',
+		'pas_virtual_range.c', 'thingy_heap.c', 'thingy_heap_config.c'
+	]
+	libpassources = [os.path.join('libpas', 'src', 'libpas', path) for path in libpassources]
 	bmallocsources = [
 		'AllIsoHeaps.cpp', 'Allocator.cpp', 'AvailableMemory.cpp', 'bmalloc.cpp', 'Cache.cpp', 'CryptoRandom.cpp',
 		'Deallocator.cpp', 'DebugHeap.cpp', 'Environment.cpp', 'FreeList.cpp', 'Gigacage.cpp', 'Heap.cpp',
 		'HeapKind.cpp', 'IsoHeapImpl.cpp', 'IsoPage.cpp', 'IsoSharedHeap.cpp', 'IsoSharedPage.cpp', 'IsoTLS.cpp',
 		'IsoTLSEntry.cpp', 'IsoTLSLayout.cpp', 'LargeMap.cpp', 'Logging.cpp', 'mbmalloc.cpp', 'Mutex.cpp',
-		'ObjectType.cpp', 'PerProcess.cpp', 'PerThread.cpp', 'Scavenger.cpp', 'StaticMutex.cpp', 'VMHeap.cpp'
+		'ObjectType.cpp', 'PerProcess.cpp', 'Scavenger.cpp'
 	]
 	if target.is_macos() or target.is_ios():
 		bmallocsources += ['Zone.cpp']
 	bmallocsources = [os.path.join('bmalloc', path) for path in bmallocsources]
 	if not target.is_android():
-		bmalloc_variables = merge_variables({'runtime': 'c++'}, variables)
-		bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, variables = bmalloc_variables)
-		bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test']
-		generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths, variables = bmalloc_variables)
+		bmalloc_variables = merge_variables({'runtime': 'c++', 'defines': ['PAS_BMALLOC=1', 'NDEBUG=1']}, variables)
+		bmalloc_lib = generator.lib(module = 'bmalloc', sources = bmallocsources + libpassources, basepath = 'benchmark', includepaths = includepaths + bmallocincludepaths, variables = bmalloc_variables)
+		bmalloc_depend_libs = ['bmalloc', 'benchmark', 'test', 'atomic']
+		generator.bin(module = 'bmalloc', sources = ['benchmark.cc'], binname = 'benchmark-bmalloc', basepath = 'benchmark', implicit_deps = [bmalloc_lib, benchmark_lib, test_lib], libs = bmalloc_depend_libs, includepaths = includepaths + bmallocincludepaths, variables = bmalloc_variables)
 
 #Requires transactional memory for full performance?
 if not target.is_windows():

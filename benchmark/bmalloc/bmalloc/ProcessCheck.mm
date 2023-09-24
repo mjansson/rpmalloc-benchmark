@@ -26,52 +26,74 @@
 #import "ProcessCheck.h"
 
 #import <Foundation/Foundation.h>
+#import <cstdlib>
 #import <mutex>
 
 namespace bmalloc {
 
-#if !BPLATFORM(WATCHOS)
+#if BPLATFORM(COCOA) && !BPLATFORM(WATCHOS)
 bool gigacageEnabledForProcess()
 {
     // Note that this function is only called once.
     // If we wanted to make it efficient to call more than once, we could memoize the result in a global boolean.
 
-    NSString *appName = [[NSBundle mainBundle] bundleIdentifier];
-    if (appName) {
-        bool isWebProcess = [appName hasPrefix:@"com.apple.WebKit.WebContent"];
-        return isWebProcess;
+    @autoreleasepool {
+        if (NSString *appName = [[NSBundle mainBundle] bundleIdentifier]) {
+            bool isWebProcess = [appName hasPrefix:@"com.apple.WebKit.WebContent"];
+            return isWebProcess;
+        }
+
+        NSString *processName = [[NSProcessInfo processInfo] processName];
+        bool isOptInBinary = [processName isEqualToString:@"jsc"]
+            || [processName isEqualToString:@"DumpRenderTree"]
+            || [processName isEqualToString:@"wasm"]
+            || [processName hasPrefix:@"test"]
+            || [processName hasPrefix:@"Test"];
+
+        return isOptInBinary;
     }
-
-    NSString *processName = [[NSProcessInfo processInfo] processName];
-    bool isOptInBinary = [processName isEqualToString:@"jsc"]
-        || [processName isEqualToString:@"DumpRenderTree"]
-        || [processName isEqualToString:@"wasm"]
-        || [processName hasPrefix:@"test"]
-        || [processName hasPrefix:@"Test"];
-
-    return isOptInBinary;
 }
-#endif // !BPLATFORM(WATCHOS)
+#endif // BPLATFORM(COCOA) && !BPLATFORM(WATCHOS)
 
-#if BUSE(CHECK_NANO_MALLOC)
+bool shouldAllowMiniMode()
+{
+    // Mini mode is mainly meant for constraining memory usage in bursty daemons that use JavaScriptCore.
+    // It's also contributed to power regressions when enabled for large application processes and in the
+    // WebKit XPC services. So we disable mini mode for those processes.
+    bool isApplication = false;
+    bool isWebKitProcess = false;
+    if (const char* serviceName = getenv("XPC_SERVICE_NAME")) {
+        static constexpr char appPrefix[] = "application.";
+        static constexpr char webKitPrefix[] = "com.apple.WebKit.";
+        isApplication = !strncmp(serviceName, appPrefix, sizeof(appPrefix) - 1);
+        isWebKitProcess = !strncmp(serviceName, webKitPrefix, sizeof(webKitPrefix) - 1);
+    }
+    return !isApplication && !isWebKitProcess;
+}
+
+#if BPLATFORM(IOS_FAMILY)
 bool shouldProcessUnconditionallyUseBmalloc()
 {
     static bool result;
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [&] () {
-        if (NSString *appName = [[NSBundle mainBundle] bundleIdentifier]) {
-            auto contains = [&] (NSString *string) {
-                return [appName rangeOfString:string options:NSCaseInsensitiveSearch].location != NSNotFound;
-            };
-            result = contains(@"com.apple.WebKit") || contains(@"safari");
-        } else {
-            NSString *processName = [[NSProcessInfo processInfo] processName];
-            result = [processName isEqualToString:@"jsc"] || [processName isEqualToString:@"wasm"];
+        @autoreleasepool {
+            if (NSString *appName = [[NSBundle mainBundle] bundleIdentifier]) {
+                auto contains = [&] (NSString *string) {
+                    return [appName rangeOfString:string options:NSCaseInsensitiveSearch].location != NSNotFound;
+                };
+                result = contains(@"com.apple.WebKit") || contains(@"safari");
+            } else {
+                NSString *processName = [[NSProcessInfo processInfo] processName];
+                result = [processName isEqualToString:@"jsc"]
+                    || [processName isEqualToString:@"wasm"]
+                    || [processName hasPrefix:@"test"];
+            }
         }
     });
 
     return result;
 }
-#endif // BUSE(CHECK_NANO_MALLOC)
+#endif // BPLATFORM(IOS_FAMILY)
 
 }

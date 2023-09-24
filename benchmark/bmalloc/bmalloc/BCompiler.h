@@ -38,20 +38,41 @@
 
 #define BASAN_ENABLED BCOMPILER_HAS_CLANG_FEATURE(address_sanitizer)
 
+/* BCOMPILER_HAS_CLANG_DECLSPEC() - whether the compiler supports a Microsoft style __declspec attribute. */
+/* https://clang.llvm.org/docs/LanguageExtensions.html#has-declspec-attribute */
+#ifdef __has_declspec_attribute
+#define BCOMPILER_HAS_CLANG_DECLSPEC(x) __has_declspec_attribute(x)
+#else
+#define BCOMPILER_HAS_CLANG_DECLSPEC(x) 0
+#endif
+
+#if defined(__clang__)
+#define BCOMPILER_CLANG 1
+#endif
+
 /* BCOMPILER(GCC_COMPATIBLE) - GNU Compiler Collection or compatibles */
 
 #if defined(__GNUC__)
 #define BCOMPILER_GCC_COMPATIBLE 1
 #endif
 
-/* BNO_RETURN */
-
-#if !defined(BNO_RETURN) && BCOMPILER(GCC_COMPATIBLE)
-#define BNO_RETURN __attribute((__noreturn__))
+#if defined(_MSC_VER)
+#define BCOMPILER_MSVC 1
+#if _MSC_VER < 1910
+#error "Please use a newer version of Visual Studio. WebKit requires VS2017 or newer to compile."
+#endif
 #endif
 
+/* BNO_RETURN */
+
 #if !defined(BNO_RETURN)
+#if BCOMPILER(GCC_COMPATIBLE)
+#define BNO_RETURN __attribute((__noreturn__))
+#elif BCOMPILER(MSVC)
+#define BNO_RETURN __declspec(noreturn)
+#else
 #define BNO_RETURN
+#endif
 #endif
 
 /* BFALLTHROUGH */
@@ -70,4 +91,26 @@
 
 #if !defined(BFALLTHROUGH)
 #define BFALLTHROUGH
+#endif
+
+/* BUNUSED_TYPE_ALIAS */
+
+#if !defined(BUNUSED_TYPE_ALIAS) && BCOMPILER(GCC_COMPATIBLE)
+#define BUNUSED_TYPE_ALIAS __attribute__((unused))
+#endif
+
+#if !defined(BUNUSED_TYPE_ALIAS)
+#define BUNUSED_TYPE_ALIAS
+#endif
+
+/* BFUNCTION_SIGNATURE */
+
+#if !defined(BFUNCTION_SIGNATURE)
+#if BCOMPILER(GCC_COMPATIBLE)
+#define BFUNCTION_SIGNATURE __PRETTY_FUNCTION__
+#elif BCOMPILER(MSVC)
+#define BFUNCTION_SIGNATURE __FUNCSIG__
+#else
+#error "Unsupported compiler"
+#endif
 #endif

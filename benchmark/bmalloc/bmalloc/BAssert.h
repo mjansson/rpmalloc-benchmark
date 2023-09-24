@@ -32,7 +32,7 @@
 #include <os/log.h>
 #endif
 
-#if defined(NDEBUG) && BOS(DARWIN)
+#if defined(NDEBUG) && (BOS(DARWIN) || BPLATFORM(PLAYSTATION))
 
 #if BASAN_ENABLED
 #define BBreakpointTrap()  __builtin_trap()
@@ -41,7 +41,7 @@
 #elif BCPU(ARM_THUMB2)
 #define BBreakpointTrap()  __asm__ volatile ("bkpt #0")
 #elif BCPU(ARM64)
-#define BBreakpointTrap()  __asm__ volatile ("brk #0")
+#define BBreakpointTrap()  __asm__ volatile ("brk #0xc471")
 #else
 #error "Unsupported CPU".
 #endif
@@ -54,7 +54,7 @@
         __builtin_unreachable(); \
     } while (false)
 
-#else // not defined(NDEBUG) && BOS(DARWIN)
+#else // not defined(NDEBUG) && (BOS(DARWIN) || BPLATFORM(PLAYSTATION))
 
 #if BASAN_ENABLED
 #define BCRASH() __builtin_trap()
@@ -73,7 +73,7 @@
 #endif // defined(__GNUC__)
 #endif // BASAN_ENABLED
 
-#endif // defined(NDEBUG) && BOS(DARWIN)
+#endif // defined(NDEBUG) && (BOS(DARWIN) || BPLATFORM(PLAYSTATION))
 
 #define BASSERT_IMPL(x) do { \
     if (!(x)) \

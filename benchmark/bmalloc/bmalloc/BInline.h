@@ -23,11 +23,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef BInline_h
-#define BInline_h
+#pragma once
 
+#include "BCompiler.h"
+
+#if BCOMPILER(GCC_COMPATIBLE)
 #define BINLINE __attribute__((always_inline)) inline
-
 #define BNO_INLINE __attribute__((noinline))
-
-#endif // BInline_h
+#elif BCOMPILER(MSVC)
+#define BINLINE __forceinline
+#define BNO_INLINE __declspec(noinline)
+#endif

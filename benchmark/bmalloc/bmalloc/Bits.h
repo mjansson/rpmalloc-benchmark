@@ -29,6 +29,8 @@
 #include "BInline.h"
 #include <climits>
 
+#if !BUSE(LIBPAS)
+
 namespace bmalloc {
 
 constexpr size_t bitsArrayLength(size_t numBits) { return (numBits + 31) / 32; }
@@ -247,12 +249,6 @@ public:
                 return false;
         }
         return true;
-    }
-    
-    template<typename Other>
-    bool operator!=(const Other& other) const
-    {
-        return !(*this == other);
     }
     
     bool at(size_t index) const
@@ -504,3 +500,4 @@ public:
 
 } // namespace bmalloc
 
+#endif

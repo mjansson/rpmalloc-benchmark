@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef PerThread_h
-#define PerThread_h
+#pragma once
 
 #include "BInline.h"
 #include "BPlatform.h"
@@ -43,6 +42,8 @@
 #else
 #define HAVE_PTHREAD_MACHDEP_H 0
 #endif
+
+#if !BUSE(LIBPAS)
 
 namespace bmalloc {
 
@@ -68,18 +69,27 @@ template<typename T> struct PerThreadStorage;
 // For now, we only support PerThread<PerHeapKind<Cache>>. We can expand to other types by
 // using more keys.
 template<> struct PerThreadStorage<PerHeapKind<Cache>> {
-    static const pthread_key_t key = __PTK_FRAMEWORK_JAVASCRIPTCORE_KEY0;
+    static constexpr pthread_key_t key = __PTK_FRAMEWORK_JAVASCRIPTCORE_KEY0;
 
     static void* get()
     {
         return _pthread_getspecific_direct(key);
     }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmissing-noreturn"
     static void init(void* object, void (*destructor)(void*))
     {
+#if BUSE(LIBPAS)
+        BUNUSED(object);
+        BUNUSED(destructor);
+        BCRASH();
+#else
         _pthread_setspecific_direct(key, object);
         pthread_key_init_np(key, destructor);
+#endif
     }
+#pragma clang diagnostic pop
 };
 
 #else
@@ -108,16 +118,9 @@ template<typename T> struct PerThreadStorage {
     }
 };
 
-class Cache;
-class Heap;
-
-template<> bool PerThreadStorage<PerHeapKind<Cache>>::s_didInitialize;
-template<> pthread_key_t PerThreadStorage<PerHeapKind<Cache>>::s_key;
-template<> std::once_flag PerThreadStorage<PerHeapKind<Cache>>::s_onceFlag;
-
-template<> bool PerThreadStorage<PerHeapKind<Heap>>::s_didInitialize;
-template<> pthread_key_t PerThreadStorage<PerHeapKind<Heap>>::s_key;
-template<> std::once_flag PerThreadStorage<PerHeapKind<Heap>>::s_onceFlag;
+template<typename T> bool PerThreadStorage<T>::s_didInitialize;
+template<typename T> pthread_key_t PerThreadStorage<T>::s_key;
+template<typename T> std::once_flag PerThreadStorage<T>::s_onceFlag;
 
 #endif
 
@@ -156,4 +159,4 @@ T* PerThread<T>::getSlowCase()
 
 } // namespace bmalloc
 
-#endif // PerThread_h
+#endif

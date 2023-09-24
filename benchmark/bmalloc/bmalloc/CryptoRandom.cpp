@@ -61,7 +61,7 @@ public:
 
 class ARC4RandomNumberGenerator : public StaticPerProcess<ARC4RandomNumberGenerator> {
 public:
-    ARC4RandomNumberGenerator(const std::lock_guard<Mutex>&);
+    ARC4RandomNumberGenerator(const LockHolder&);
 
     uint32_t randomNumber();
     void randomValues(void* buffer, size_t length);
@@ -75,7 +75,7 @@ private:
     ARC4Stream m_stream;
     int m_count;
 };
-DECLARE_STATIC_PER_PROCESS_STORAGE(ARC4RandomNumberGenerator);
+DECLARE_STATIC_PER_PROCESS_STORAGE_WITH_LINKAGE(ARC4RandomNumberGenerator, BNOEXPORT);
 DEFINE_STATIC_PER_PROCESS_STORAGE(ARC4RandomNumberGenerator);
 
 ARC4Stream::ARC4Stream()
@@ -86,7 +86,7 @@ ARC4Stream::ARC4Stream()
     j = 0;
 }
 
-ARC4RandomNumberGenerator::ARC4RandomNumberGenerator(const std::lock_guard<Mutex>&)
+ARC4RandomNumberGenerator::ARC4RandomNumberGenerator(const LockHolder&)
     : m_count(0)
 {
 }
@@ -164,7 +164,7 @@ uint8_t ARC4RandomNumberGenerator::getByte()
 
 void ARC4RandomNumberGenerator::randomValues(void* buffer, size_t length)
 {
-    std::lock_guard<Mutex> lock(mutex());
+    LockHolder lock(mutex());
 
     unsigned char* result = reinterpret_cast<unsigned char*>(buffer);
     stirIfNeeded();

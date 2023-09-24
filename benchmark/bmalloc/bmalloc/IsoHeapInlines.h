@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "BPlatform.h"
 #include "DeferredDecommitInlines.h"
 #include "DeferredTriggerInlines.h"
 #include "EligibilityResultInlines.h"
@@ -42,6 +43,18 @@
 #include "IsoTLSInlines.h"
 
 namespace bmalloc { namespace api {
+
+#if !BUSE(LIBPAS)
+
+#if BENABLE_MALLOC_HEAP_BREAKDOWN
+template<typename Type>
+IsoHeap<Type>::IsoHeap(const char* heapClass)
+    : m_zone(malloc_create_zone(0, 0))
+{
+    if (heapClass)
+        malloc_set_zone_name(m_zone, heapClass);
+}
+#endif
 
 template<typename Type>
 void* IsoHeap<Type>::allocate()
@@ -72,9 +85,24 @@ void IsoHeap<Type>::scavenge()
 template<typename Type>
 bool IsoHeap<Type>::isInitialized()
 {
-    std::atomic<unsigned>* atomic =
-        reinterpret_cast<std::atomic<unsigned>*>(&m_allocatorOffsetPlusOne);
-    return !!atomic->load(std::memory_order_acquire);
+    auto* atomic = reinterpret_cast<std::atomic<IsoHeapImpl<Config>*>*>(&m_impl);
+    return atomic->load(std::memory_order_acquire);
+}
+
+template<typename Type>
+void IsoHeap<Type>::initialize()
+{
+    // We are using m_impl field as a guard variable of the initialization of IsoHeap.
+    // IsoHeap::isInitialized gets m_impl with "acquire", and IsoHeap::initialize stores
+    // the value to m_impl with "release". To make IsoHeap changes visible to any threads
+    // when IsoHeap::isInitialized returns true, we need to store the value to m_impl *after*
+    // all the initialization finishes.
+    auto* heap = new IsoHeapImpl<Config>();
+    heap->addToAllIsoHeaps();
+    setAllocatorOffset(heap->allocatorOffset());
+    setDeallocatorOffset(heap->deallocatorOffset());
+    auto* atomic = reinterpret_cast<std::atomic<IsoHeapImpl<Config>*>*>(&m_impl);
+    atomic->store(heap, std::memory_order_release);
 }
 
 template<typename Type>
@@ -84,12 +112,14 @@ auto IsoHeap<Type>::impl() -> IsoHeapImpl<Config>&
     return *m_impl;
 }
 
+#endif // !BUSE(LIBPAS)
+
 // This is most appropraite for template classes.
 #define MAKE_BISO_MALLOCED_INLINE(isoType) \
 public: \
     static ::bmalloc::api::IsoHeap<isoType>& bisoHeap() \
     { \
-        static ::bmalloc::api::IsoHeap<isoType> heap; \
+        static ::bmalloc::api::IsoHeap<isoType> heap("WebKit_"#isoType); \
         return heap; \
     } \
     \
@@ -109,13 +139,20 @@ public: \
     \
     void* operator new[](size_t size) = delete; \
     void operator delete[](void* p) = delete; \
+    \
+    static void freeAfterDestruction(void* p) \
+    { \
+        bisoHeap().deallocate(p); \
+    } \
+    \
+    using webkitFastMalloced = int; \
 private: \
-typedef int __makeBisoMallocedInlineMacroSemicolonifier
+    using __makeBisoMallocedInlineMacroSemicolonifier BUNUSED_TYPE_ALIAS = int
 
 #define MAKE_BISO_MALLOCED_IMPL(isoType) \
 ::bmalloc::api::IsoHeap<isoType>& isoType::bisoHeap() \
 { \
-    static ::bmalloc::api::IsoHeap<isoType> heap; \
+    static ::bmalloc::api::IsoHeap<isoType> heap("WebKit "#isoType); \
     return heap; \
 } \
 \
@@ -130,13 +167,18 @@ void isoType::operator delete(void* p) \
     bisoHeap().deallocate(p); \
 } \
 \
+void isoType::freeAfterDestruction(void* p) \
+{ \
+    bisoHeap().deallocate(p); \
+} \
+\
 struct MakeBisoMallocedImplMacroSemicolonifier##isoType { }
 
 #define MAKE_BISO_MALLOCED_IMPL_TEMPLATE(isoType) \
 template<> \
 ::bmalloc::api::IsoHeap<isoType>& isoType::bisoHeap() \
 { \
-    static ::bmalloc::api::IsoHeap<isoType> heap; \
+    static ::bmalloc::api::IsoHeap<isoType> heap("WebKit_"#isoType); \
     return heap; \
 } \
 \
@@ -149,6 +191,12 @@ void* isoType::operator new(size_t size) \
 \
 template<> \
 void isoType::operator delete(void* p) \
+{ \
+    bisoHeap().deallocate(p); \
+} \
+\
+template<> \
+void isoType::freeAfterDestruction(void* p) \
 { \
     bisoHeap().deallocate(p); \
 } \

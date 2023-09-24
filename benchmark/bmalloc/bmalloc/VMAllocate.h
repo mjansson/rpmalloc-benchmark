@@ -23,15 +23,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef VMAllocate_h
-#define VMAllocate_h
+#pragma once
 
 #include "BAssert.h"
+#include "BSyscall.h"
 #include "BVMTags.h"
 #include "Logging.h"
 #include "Range.h"
 #include "Sizes.h"
-#include "Syscall.h"
 #include <algorithm>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -95,7 +94,7 @@ inline void vmValidate(void* p, size_t vmSize)
 
 inline size_t vmPageSizePhysical()
 {
-#if BPLATFORM(IOS_FAMILY)
+#if BOS(DARWIN) && (BCPU(ARM64) || BCPU(ARM))
     return vm_kernel_page_size;
 #else
     static size_t cached;
@@ -130,9 +129,9 @@ inline void* tryVMAllocate(size_t vmSize, VMTag usage = VMTag::Malloc)
     return result;
 }
 
-inline void* vmAllocate(size_t vmSize)
+inline void* vmAllocate(size_t vmSize, VMTag usage = VMTag::Malloc)
 {
-    void* result = tryVMAllocate(vmSize);
+    void* result = tryVMAllocate(vmSize, usage);
     RELEASE_BASSERT(result);
     return result;
 }
@@ -189,9 +188,9 @@ inline void* tryVMAllocate(size_t vmAlignment, size_t vmSize, VMTag usage = VMTa
     return aligned;
 }
 
-inline void* vmAllocate(size_t vmAlignment, size_t vmSize)
+inline void* vmAllocate(size_t vmAlignment, size_t vmSize, VMTag usage = VMTag::Malloc)
 {
-    void* result = tryVMAllocate(vmAlignment, vmSize);
+    void* result = tryVMAllocate(vmAlignment, vmSize, usage);
     RELEASE_BASSERT(result);
     return result;
 }
@@ -215,7 +214,11 @@ inline void vmAllocatePhysicalPages(void* p, size_t vmSize)
 {
     vmValidatePhysical(p, vmSize);
 #if BOS(DARWIN)
-    SYSCALL(madvise(p, vmSize, MADV_FREE_REUSE));
+    BUNUSED_PARAM(p);
+    BUNUSED_PARAM(vmSize);
+    // For the Darwin platform, we don't need to call madvise(..., MADV_FREE_REUSE)
+    // to commit physical memory to back a range of allocated virtual memory.
+    // Instead the kernel will commit pages as they are touched.
 #else
     SYSCALL(madvise(p, vmSize, MADV_NORMAL));
 #if BOS(LINUX)
@@ -261,5 +264,3 @@ inline void vmAllocatePhysicalPagesSloppy(void* p, size_t size)
 }
 
 } // namespace bmalloc
-
-#endif // VMAllocate_h
