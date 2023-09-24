@@ -250,8 +250,7 @@ if not target.is_windows():
 	generator.bin(module = 'smmalloc', sources = ['benchmark.cpp'] + smmallocsources, binname = 'benchmark-smmalloc', basepath = 'benchmark', implicit_deps = [benchmark_lib, test_lib], libs = smmalloc_depend_libs, includepaths = includepaths, variables = smmalloc_variables)
 
 mimallocsources = [
-	'stats.c', 'os.c', 'segment.c', 'page.c', 'random.c', 'arena.c', 'bitmap.c', 'alloc.c', 'alloc-aligned.c',
-    'segment-cache.c', 'heap.c', 'options.c', 'init.c'
+	'static.c'
 ]
 mimallocsources = [os.path.join('src', path) for path in mimallocsources]
 mimalloc_variables = {'defines': ['MI_DEBUG=0']}
